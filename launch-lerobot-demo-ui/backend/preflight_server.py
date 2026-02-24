@@ -8,24 +8,28 @@ A lightweight FastAPI server that helps users:
 4. Detect available robot serial ports
 5. Save the mapping to config.py
 
+IMPORTANT: This server does NOT import OpenCV or any GPU libraries.
+All camera operations are delegated to _camera_worker.py which runs
+in a separate subprocess. This prevents CUDA driver corruption that
+would break the main inference process (eval_act_safe.py).
+
 Usage:
     uvicorn preflight_server:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
 import glob
+import json
 import os
-import platform
 import re
 import signal
 import subprocess
-import threading
+import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import cv2
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -33,13 +37,9 @@ from pydantic import BaseModel
 
 # ── Constants ──────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.py"
+WORKER_SCRIPT = Path(__file__).parent / "_camera_worker.py"
 CACHE_TTL = 1.5          # seconds to cache a snapshot per device
-WARMUP_FRAMES = 5        # frames to discard for auto-exposure settling
-SOLID_COLOR_THRESHOLD = 0.97   # fraction of pixels within ±10 of median = solid color
-
-# ── Global camera lock — only one camera open at a time ───────────────────
-# This prevents resource contention when multiple browser polls arrive
-_camera_lock = threading.Lock()
+DETECT_TIMEOUT = 60      # seconds to wait for camera detection
 
 # ── Snapshot cache ─────────────────────────────────────────────────────────
 _snapshot_cache: dict[str, tuple[float, bytes]] = {}
@@ -62,134 +62,56 @@ app.add_middleware(
 )
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── Subprocess helpers ─────────────────────────────────────────────────────
+# All camera work happens in _camera_worker.py subprocess.
+# This ensures the FastAPI process NEVER loads OpenCV / CUDA,
+# preventing GPU driver corruption that would break inference.
 
-def _is_capture_device(path: str) -> bool:
-    """
-    On Linux, USB cameras expose pairs of /dev/videoN nodes:
-      - Even index  (0, 2, 4, …)  → actual capture stream
-      - Odd index   (1, 3, 5, …)  → metadata / control node (returns garbage/green)
+def _worker_detect_cameras() -> list[dict[str, Any]]:
+    """Run _camera_worker.py detect in a subprocess, return camera list."""
+    result = subprocess.run(
+        [sys.executable, str(WORKER_SCRIPT), "detect"],
+        capture_output=True,
+        timeout=DETECT_TIMEOUT,
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"Camera detection failed: {stderr}")
 
-    Filter to even-numbered devices only to avoid metadata nodes.
-    Exception: if only odd-numbered devices exist for a given path, keep them.
-    """
-    try:
-        num = int(re.search(r"\d+$", path).group())
-        return num % 2 == 0
-    except (AttributeError, ValueError):
-        return True  # non-numeric path → keep it
-
-
-def _is_solid_color_frame(frame) -> bool:
-    """
-    Return True if the frame is dominated by a single solid color
-    (i.e. blank green, all-black, etc.) and is therefore not useful.
-    Uses the fact that a usable camera frame has variance across its pixels.
-    """
-    import numpy as np
-    if frame is None:
-        return True
-    # Convert to grayscale for a simple check
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    median_val = float(np.median(gray))
-    # Fraction of pixels within ±12 of the median
-    within = np.sum(np.abs(gray.astype(float) - median_val) < 12)
-    fraction = within / gray.size
-    return fraction > SOLID_COLOR_THRESHOLD
+    stdout = result.stdout.decode(errors="replace").strip()
+    if not stdout:
+        return []
+    return json.loads(stdout)
 
 
-def _detect_video_devices() -> list[dict[str, Any]]:
-    """
-    Scan /dev/video* and return metadata for each usable capture camera.
-    - Filters to even-numbered devices (skips metadata/control nodes)
-    - Validates that each device returns a real (non-solid-color) frame
-    - Sequential access (protected by _camera_lock)
-    """
-    cameras: list[dict[str, Any]] = []
-
-    if platform.system() == "Linux":
-        all_paths = sorted(glob.glob("/dev/video*"))
-        # Filter to capture nodes (even-numbered)
-        paths = [p for p in all_paths if _is_capture_device(p)]
-    else:
-        paths = [str(i) for i in range(20)]
-
-    for path in paths:
-        target = path if platform.system() == "Linux" else int(path)
-        with _camera_lock:
-            cap = cv2.VideoCapture(target)
-            if not cap.isOpened():
-                cap.release()
-                continue
-
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
-            fourcc = "".join([chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)])
-
-            # Validate: try to grab a real frame (discard warmup frames)
-            valid = False
-            last_frame = None
-            for _ in range(WARMUP_FRAMES + 1):
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    last_frame = frame
-
-            cap.release()
-
-        if last_frame is not None and not _is_solid_color_frame(last_frame):
-            valid = True
-
-        if valid:
-            cameras.append({
-                "device": path if platform.system() == "Linux" else int(path),
-                "width": w,
-                "height": h,
-                "fps": round(fps, 1),
-                "fourcc": fourcc,
-            })
-
-    return cameras
-
-
-def _capture_snapshot_jpeg(device: str, quality: int = 80) -> bytes:
-    """
-    Open a camera, grab one stable frame, return JPEG bytes, then release.
-    Protected by _camera_lock to prevent concurrent camera opens.
-    """
+def _worker_capture_snapshot(device: str) -> bytes:
+    """Run _camera_worker.py snapshot <device> in a subprocess, return JPEG bytes."""
     # Check cache first
     now = time.time()
     cached = _snapshot_cache.get(device)
     if cached and (now - cached[0]) < CACHE_TTL:
         return cached[1]
 
-    with _camera_lock:
-        cap = cv2.VideoCapture(device)
-        if not cap.isOpened():
-            cap.release()
-            raise RuntimeError(f"Cannot open {device}")
+    result = subprocess.run(
+        [sys.executable, str(WORKER_SCRIPT), "snapshot", device],
+        capture_output=True,
+        timeout=15,
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"Snapshot failed for {device}: {stderr}")
 
-        try:
-            # Discard warmup frames for auto-exposure
-            ret, frame = False, None
-            for _ in range(WARMUP_FRAMES + 1):
-                ret, frame = cap.read()
-
-            if not ret or frame is None:
-                raise RuntimeError(f"Failed to read frame from {device}")
-
-            if _is_solid_color_frame(frame):
-                raise RuntimeError(f"Device {device} returned a solid-color (unusable) frame")
-
-            _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            jpeg_bytes = buf.tobytes()
-        finally:
-            cap.release()
+    jpeg_bytes = result.stdout
+    if not jpeg_bytes:
+        raise RuntimeError(f"Empty snapshot from {device}")
 
     _snapshot_cache[device] = (time.time(), jpeg_bytes)
     return jpeg_bytes
 
+
+# ── Non-camera helpers ─────────────────────────────────────────────────────
 
 def _detect_serial_ports() -> list[dict[str, str]]:
     """Detect available serial ports (robot motor bus connections)."""
@@ -204,7 +126,6 @@ def _detect_serial_ports() -> list[dict[str, str]]:
                 "hwid": p.hwid or "",
             })
     except ImportError:
-        # Fallback: scan /dev/ttyACM* and /dev/ttyUSB*
         for pattern in ["/dev/ttyACM*", "/dev/ttyUSB*"]:
             for dev in sorted(glob.glob(pattern)):
                 ports.append({"device": dev, "description": "", "manufacturer": "", "hwid": ""})
@@ -275,11 +196,13 @@ class SaveConfigRequest(BaseModel):
 async def detect_cameras():
     """
     Detect all usable video capture devices.
-    - Filters to even-numbered /dev/video* (skips metadata/control nodes)
-    - Validates each device returns a real non-solid-color frame
+    Camera work runs in a separate subprocess (_camera_worker.py).
     """
     loop = asyncio.get_event_loop()
-    cameras = await loop.run_in_executor(None, _detect_video_devices)
+    try:
+        cameras = await loop.run_in_executor(None, _worker_detect_cameras)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     return {"cameras": cameras, "count": len(cameras)}
 
 
@@ -287,7 +210,7 @@ async def detect_cameras():
 async def get_snapshot(device_path: str):
     """
     Capture a snapshot from a specific video device.
-    device_path is the path without leading /  e.g. "dev/video4"
+    Camera work runs in a separate subprocess (_camera_worker.py).
     """
     device = f"/{device_path}"
     if not os.path.exists(device):
@@ -295,7 +218,7 @@ async def get_snapshot(device_path: str):
 
     loop = asyncio.get_event_loop()
     try:
-        jpeg_bytes = await loop.run_in_executor(None, _capture_snapshot_jpeg, device)
+        jpeg_bytes = await loop.run_in_executor(None, _worker_capture_snapshot, device)
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -319,9 +242,7 @@ async def get_current_config():
 
 @app.post("/api/preflight/save-config")
 async def save_config(req: SaveConfigRequest):
-    """
-    Save camera assignments and robot port to config.py.
-    """
+    """Save camera assignments and robot port to config.py."""
     parts = [f"{c.role}:{c.device}" for c in req.cameras]
     cameras_str = ",".join(parts)
 
@@ -344,30 +265,31 @@ async def launch_control():
     Switch from preflight mode to main robot control mode.
     1. Spawns main_robot:app uvicorn process in background (detached)
     2. Schedules self-termination of this preflight server after 1.5s
-       (enough time to send the response back to the browser)
-    The frontend should poll /api/health until main_robot responds.
     """
     backend_dir = Path(__file__).parent
     conda_sh = os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
 
-    # Build the shell command to restart as main_robot
+    # Explicitly unset CUDA_VISIBLE_DEVICES so main_robot sees the GPU
     cmd = (
+        f"unset CUDA_VISIBLE_DEVICES && "
         f"source {conda_sh} && conda activate lerobot && "
         f"sleep 2 && "
         f"cd {backend_dir} && "
         f"exec uvicorn main_robot:app --host 0.0.0.0 --port 8000"
     )
 
-    # Launch as a completely detached process so it survives after preflight dies
+    # Clean environment — remove CUDA_VISIBLE_DEVICES if set
+    clean_env = {k: v for k, v in os.environ.items() if k != "CUDA_VISIBLE_DEVICES"}
+
     subprocess.Popen(
         ["bash", "-c", cmd],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
-        start_new_session=True,   # detach from current process group
+        env=clean_env,
+        start_new_session=True,
     )
 
-    # Schedule self-termination after 1.5s (response will have been sent by then)
     async def self_terminate():
         await asyncio.sleep(1.5)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -384,5 +306,5 @@ async def health():
 
 @app.get("/api/health")
 async def health_generic():
-    """Generic health check — used by frontend to detect when main_robot is up."""
+    """Generic health check — used by frontend to detect backend type."""
     return {"status": "ok", "service": "preflight"}
