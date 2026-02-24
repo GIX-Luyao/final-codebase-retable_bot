@@ -173,9 +173,9 @@ def init_keyboard_listener():
                     print("▶️  Resuming from emergency stop...")
                     events["emergency_stop"] = False
             elif hasattr(key, "char") and key.char == "r":
-                print("🏠  GO TO REST position triggered!")
-                events["go_to_rest"] = True
-                events["exit_early"] = True
+                    print("🏠  GO TO REST position triggered!")
+                    events["go_to_rest"] = True
+                    events["exit_early"] = True
         except Exception as e:
             print(f"Error handling key press: {e}")
 

@@ -53,7 +53,7 @@ class RobotState:
         self.hand_detect_enabled = HAND_DETECT_ENABLED
         self.hand_detected = False
         self.auto_stopped = False
-
+        
     def to_dict(self):
         return {
             "state": self.state,
@@ -64,7 +64,7 @@ class RobotState:
             "hand_detected": self.hand_detected,
             "auto_stopped": self.auto_stopped,
         }
-
+    
     def log_event(self, event: str, details: dict = None):
         entry = {
             "timestamp": datetime.now().isoformat(),
@@ -116,7 +116,7 @@ def parse_output(line: str) -> dict:
     """Parse eval_act_safe.py stdout and return state updates."""
     lo = line.lower()
     raw = line.strip()
-
+    
     # ── Warmup phases ──
     if "warmup_phase: loading_model" in lo:
         return {"state": "WARMUP", "step": "Loading model", "message": "Loading ACT model to GPU...", "progress": 10}
@@ -148,7 +148,7 @@ def parse_output(line: str) -> dict:
     if "hand cleared" in lo and "auto" in lo:
         return {"state": "WORKING", "step": "Running", "message": "✅ Hand cleared — auto resumed",
                 "_hand": False, "_auto": False}
-
+    
     # ── Runtime status ──
     if "emergency stop" in lo and "auto" not in lo:
         return {"state": "PAUSED", "step": "E-Stop", "message": "Emergency stop — holding position",
@@ -158,7 +158,7 @@ def parse_output(line: str) -> dict:
     if "resumed" in lo or "continuing inference" in lo:
         return {"state": "WORKING", "step": "Running", "message": "Inference resumed",
                 "_hand": False, "_auto": False}
-
+    
     if "episode" in lo and "/" in lo:
         return {"step": "Episode", "message": raw[:60]}
 
@@ -169,16 +169,16 @@ def parse_output(line: str) -> dict:
             cur, total = int(m.group(1)), int(m.group(2))
             pct = min(int(cur / total * 100), 99)
             return {"step": "Inference", "message": f"Step {cur}/{total}", "progress": pct}
-
+    
     if "episode" in lo and "finished" in lo:
         return {"step": "Episode done", "message": raw[:60], "progress": 100}
-
+    
     if "done" in lo and "✅" in line:
         return {"_signal": "PROCESS_DONE"}
-
+    
     if "error" in lo or "traceback" in lo:
         return {"state": "ERROR", "message": raw[:120]}
-
+    
     return {}
 
 # ==================== Process Management ====================
@@ -186,14 +186,14 @@ def parse_output(line: str) -> dict:
 async def spawn_warmup_process():
     """Spawn eval_act_safe.py in wait-for-start mode."""
     global robot
-
+    
     # Clean stale control file
     if os.path.exists(CONTROL_FILE):
         os.remove(CONTROL_FILE)
-
+    
     cmd = build_inference_command()
     print(f"[PROC] Spawning warmup: {' '.join(cmd)}")
-
+    
     robot.state = "WARMUP"
     robot.step = "Starting"
     robot.progress = 0
@@ -201,10 +201,11 @@ async def spawn_warmup_process():
     robot._warmup_ready = False
     robot.log_event("WARMUP_START", {"command": " ".join(cmd)})
     await broadcast_state()
-
+    
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=LEROBOT_DIR,
@@ -212,13 +213,21 @@ async def spawn_warmup_process():
         )
         robot.process = proc
 
+        # Auto-accept calibration prompts (press Enter)
+        try:
+            proc.stdin.write(b"\n" * 10)
+            await proc.stdin.drain()
+            proc.stdin.close()
+        except Exception:
+            pass
+
         while True:
             line_bytes = await proc.stdout.readline()
             if not line_bytes:
                 break
             line = line_bytes.decode("utf-8", errors="replace")
             print(f"[OUT] {line.rstrip()}")
-
+                    
             updates = parse_output(line)
             if not updates:
                 continue
@@ -271,7 +280,7 @@ async def spawn_warmup_process():
                 if k in updates:
                     setattr(robot, k, updates[k])
             await broadcast_state()
-
+            
         rc = await proc.wait()
         print(f"[PROC] Exited with code {rc}")
 
@@ -280,7 +289,7 @@ async def spawn_warmup_process():
             robot.message = f"Process exited with code {rc}"
             robot.log_event("PROC_ERROR", {"return_code": rc})
             await broadcast_state()
-
+        
     except Exception as e:
         robot.state = "ERROR"
         robot.message = str(e)[:120]

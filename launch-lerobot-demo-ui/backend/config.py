@@ -18,7 +18,7 @@ ROBOT_CONFIG = {
     "model": "FrankYuzhe/act_merged_tissue_spoon_0203_0204_2202",
     "robot_port": "/dev/ttyACM0",
     "robot_id": "hope",
-    "cameras": "front:/dev/video0,wrist:/dev/video4",
+    "cameras": "front:/dev/video4,wrist:/dev/video6",
     "fps": 30,
     "episode_time": 200,
     "num_episodes": 10,

@@ -239,7 +239,7 @@ function App() {
           if (d.state) setState(prev => {
             if (d.state === 'DONE' && prev !== 'DONE') setTimeout(() => setShowFeedback(true), 500)
             return d.state
-          })
+            })
           if (d.step !== undefined)     setStep(d.step)
           if (d.progress !== undefined) setProgress(Math.max(0, Math.min(100, d.progress)))
           if (d.message !== undefined)  setMessage(d.message)
@@ -253,7 +253,7 @@ function App() {
         reconnRef.current = window.setTimeout(() => { backoff = Math.min(backoff * 1.5, 5000); connect() }, backoff)
       }
       ws.onerror = () => ws.close()
-    }
+      }
     connect()
     return () => { reconnRef.current && clearTimeout(reconnRef.current); wsRef.current?.close() }
   }, [])
@@ -298,7 +298,7 @@ function App() {
                 ${isWarmup ? 'border-t-cyan-400' : 'border-t-blue-400'}`} />
             )}
             <span className="text-6xl md:text-7xl lg:text-8xl">{meta.icon}</span>
-          </div>
+        </div>
           <p className={`mt-4 md:mt-6 text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-wide ${meta.text}`}>
             {autoStopped && isPaused ? '🖐️ Hand Stop' : meta.label}
           </p>
@@ -387,7 +387,7 @@ function App() {
         </div>
 
         {/* ─── Camera Feeds ─── */}
-        <CameraFeeds active={!isWarmup} handDetected={handDetected} handDetectEnabled={handDetect} />
+        <CameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
 
         {/* ─── Action Buttons ─── */}
         <div className="w-full max-w-2xl space-y-4 md:space-y-5">
@@ -439,14 +439,14 @@ function App() {
               >
                 🏠&ensp;Home
               </button>
-              <button
+          <button
                 onClick={doQuit}
                 className="flex-1 py-5 md:py-6 rounded-2xl text-lg md:text-xl lg:text-2xl font-bold
                            bg-gray-700 hover:bg-gray-600 active:bg-gray-800
                            transition-colors duration-150"
               >
                 ✕&ensp;Quit
-              </button>
+          </button>
             </div>
           )}
         </div>

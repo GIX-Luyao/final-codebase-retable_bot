@@ -1,50 +1,123 @@
-#!/bin/bash
-# Start LeRobot Demo UI - Frontend and Backend
+#!/usr/bin/env bash
+###############################################################################
+#  One-click launcher for LeRobot Demo UI (backend + frontend)
+#  Usage:  bash start.sh          # start both
+#          bash start.sh stop     # stop both
+###############################################################################
+set -e
 
-echo "=========================================="
-echo "  LeRobot Demo UI Launcher"
-echo "=========================================="
-
-# Kill any existing processes on ports 8000 and 5173
-echo "Cleaning up existing processes..."
-fuser -k 8000/tcp 2>/dev/null
-fuser -k 5173/tcp 2>/dev/null
-sleep 1
-
-# Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/backend"
+FRONTEND_DIR="$SCRIPT_DIR/ui"
 
-# Start Backend
-echo ""
-echo "Starting Backend on port 8000..."
-cd "$SCRIPT_DIR/backend"
-source /home/robotlab/miniconda3/etc/profile.d/conda.sh
-conda activate lerobot
-uvicorn main_robot:app --port 8000 &
+BACKEND_PORT=8000
+FRONTEND_PORT=5173
+
+CONDA_ENV="lerobot"
+CONDA_SH="$HOME/miniconda3/etc/profile.d/conda.sh"
+
+PID_DIR="/tmp/lerobot_ui_pids"
+mkdir -p "$PID_DIR"
+
+# ─── helpers ────────────────────────────────────────────────────────────────
+info()  { echo -e "\033[1;36m[INFO]\033[0m  $*"; }
+ok()    { echo -e "\033[1;32m[OK]\033[0m    $*"; }
+warn()  { echo -e "\033[1;33m[WARN]\033[0m  $*"; }
+err()   { echo -e "\033[1;31m[ERR]\033[0m   $*"; }
+
+kill_by_port() {
+    local port=$1
+    local pids
+    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        warn "Killing existing processes on port $port (PIDs: $pids)"
+        echo "$pids" | xargs kill -9 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+stop_all() {
+    info "Stopping LeRobot Demo UI..."
+
+    # Kill by saved PIDs
+    for f in "$PID_DIR"/backend.pid "$PID_DIR"/frontend.pid; do
+        if [ -f "$f" ]; then
+            local pid
+            pid=$(cat "$f")
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+                warn "Stopped PID $pid ($(basename "$f" .pid))"
+            fi
+            rm -f "$f"
+        fi
+    done
+
+    # Also kill by port in case PIDs are stale
+    kill_by_port $BACKEND_PORT
+    kill_by_port $FRONTEND_PORT
+
+    ok "All processes stopped."
+}
+
+# ─── stop mode ──────────────────────────────────────────────────────────────
+if [ "${1:-}" = "stop" ]; then
+    stop_all
+    exit 0
+fi
+
+# ─── pre-flight checks ─────────────────────────────────────────────────────
+if [ ! -f "$CONDA_SH" ]; then
+    err "Conda not found at $CONDA_SH"
+    exit 1
+fi
+if [ ! -d "$BACKEND_DIR" ]; then
+    err "Backend directory not found: $BACKEND_DIR"
+    exit 1
+fi
+if [ ! -d "$FRONTEND_DIR" ]; then
+    err "Frontend directory not found: $FRONTEND_DIR"
+    exit 1
+fi
+
+# ─── cleanup old processes ──────────────────────────────────────────────────
+stop_all 2>/dev/null || true
+
+# ─── start backend ──────────────────────────────────────────────────────────
+info "Starting backend on port $BACKEND_PORT ..."
+(
+    source "$CONDA_SH"
+    conda activate "$CONDA_ENV"
+    cd "$BACKEND_DIR"
+    exec uvicorn main_robot:app --host 0.0.0.0 --port "$BACKEND_PORT"
+) &
 BACKEND_PID=$!
-echo "Backend PID: $BACKEND_PID"
+echo "$BACKEND_PID" > "$PID_DIR/backend.pid"
+ok "Backend started  (PID: $BACKEND_PID)"
 
-# Wait for backend to start
-sleep 2
-
-# Start Frontend
-echo ""
-echo "Starting Frontend on port 5173..."
-cd "$SCRIPT_DIR/ui"
-npm run dev &
+# ─── start frontend ────────────────────────────────────────────────────────
+info "Starting frontend on port $FRONTEND_PORT ..."
+(
+    cd "$FRONTEND_DIR"
+    exec npx vite --host 0.0.0.0 --port "$FRONTEND_PORT"
+) &
 FRONTEND_PID=$!
-echo "Frontend PID: $FRONTEND_PID"
+echo "$FRONTEND_PID" > "$PID_DIR/frontend.pid"
+ok "Frontend started (PID: $FRONTEND_PID)"
 
+# ─── summary ───────────────────────────────────────────────────────────────
 echo ""
-echo "=========================================="
-echo "  Services Started!"
-echo "=========================================="
-echo "  Backend:  http://localhost:8000"
-echo "  Frontend: http://localhost:5173"
-echo "=========================================="
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║           🤖  LeRobot Demo UI  — Running                ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  Frontend :  http://localhost:$FRONTEND_PORT                  ║"
+echo "║  Backend  :  http://localhost:$BACKEND_PORT                   ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  Stop all :  bash $(basename "$0") stop                      ║"
+echo "║  Or press :  Ctrl+C                                     ║"
+echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "Press Ctrl+C to stop all services"
 
-# Wait for user interrupt
-trap "echo 'Stopping services...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" SIGINT SIGTERM
+# ─── wait & handle Ctrl+C ──────────────────────────────────────────────────
+trap 'echo ""; warn "Caught Ctrl+C — shutting down..."; stop_all; exit 0' INT TERM
+
 wait
