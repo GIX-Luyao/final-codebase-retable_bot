@@ -441,6 +441,9 @@ def wait_for_command(control_file: str, events: dict, target_cmd: str = "START",
         cmd = read_control_command(control_file)
         if cmd == target_cmd:
             return cmd
+        if cmd == "RESUME":
+            # Treat RESUME as START — user clicked Resume after GOTO/HOME while waiting
+            return target_cmd
         if cmd == "QUIT":
             return "QUIT"
         # Handle HAND_ON/OFF even while waiting
@@ -557,6 +560,7 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                         else:
                             target_pos = robot.rest_position
                             label = "🏠 rest"
+                            print("GOTO_STARTED:HOME", flush=True)
                         events["go_to_rest"] = False
                         events["emergency_stop"] = False
                         events["auto_stopped"] = False
@@ -568,6 +572,8 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                         model.reset()
                         if goto_idx is not None:
                             print(f"GOTO_DONE:{goto_idx}", flush=True)
+                        else:
+                            print("GOTO_DONE:HOME", flush=True)
                         print(f"  {label} reached. Inference PAUSED. Press [Enter] to resume, [Esc] to quit.", flush=True)
                         events["emergency_stop"] = True
                         home_pos = robot.bus.sync_read("Present_Position")
@@ -622,6 +628,7 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                 else:
                     target_pos = robot.rest_position
                     label = "🏠 rest"
+                    print("GOTO_STARTED:HOME", flush=True)
                 events["go_to_rest"] = False
                 events["exit_early"] = False
                 print(f"  Moving to {label} position...", flush=True)
@@ -632,6 +639,8 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                 model.reset()
                 if goto_idx is not None:
                     print(f"GOTO_DONE:{goto_idx}", flush=True)
+                else:
+                    print("GOTO_DONE:HOME", flush=True)
                 print(f"  {label} reached. Inference PAUSED. Press [Enter] to resume, [Esc] to quit.", flush=True)
                 events["emergency_stop"] = True
                 home_pos = robot.bus.sync_read("Present_Position")
