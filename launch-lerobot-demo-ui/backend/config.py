@@ -35,6 +35,13 @@ HAND_DETECT_COOLDOWN = 8          # Consecutive no-hand frames before auto-resum
 # Path to the lerobot repo (where eval_act_safe.py lives)
 LEROBOT_DIR = os.path.expanduser("~/lerobot")
 
+# ── Points CSV — joint positions for 16-grid prepositions ──
+POINTS_CSV = os.path.join(LEROBOT_DIR, "point.csv")
+
+# ── ROS2 Environment Setup ──
+ROS2_SETUP = "/opt/ros/humble/setup.bash"
+ROS2_WS_SETUP = os.path.expanduser("~/ros2_ws/install/setup.bash")
+
 
 def build_inference_command(task: str = None) -> list[str]:
     """Build the eval_act_safe.py command — same params as eval_act_andy_tube.sh."""

@@ -14,9 +14,11 @@ Usage:
 """
 
 import asyncio
+import csv
 import json
 import os
 import signal
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
@@ -26,7 +28,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import (build_inference_command, ROBOT_CONFIG, CONTROL_FILE, LEROBOT_DIR, FRAME_DIR,
-                     HAND_DETECT_ENABLED)
+                     HAND_DETECT_ENABLED, POINTS_CSV, ROS2_SETUP, ROS2_WS_SETUP)
 
 app = FastAPI(title="LeRobot SO101 Control Backend")
 
@@ -37,6 +39,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ==================== Points CSV Loading ====================
+
+def _load_points_csv(csv_path: str):
+    """Load joint positions from point.csv (header + N data rows)."""
+    points = []
+    joint_names = []
+    try:
+        with open(csv_path, "r") as f:
+            reader = csv.reader(f)
+            for i, row in enumerate(reader):
+                if i == 0:
+                    joint_names = [c.strip() for c in row]
+                    continue
+                if not row or all(not c.strip() for c in row):
+                    continue
+                points.append([float(x) for x in row])
+    except Exception as e:
+        print(f"[WARN] Could not load points CSV ({csv_path}): {e}")
+    return points, joint_names
+
+
+POINTS, JOINT_NAMES = _load_points_csv(POINTS_CSV)
+print(f"[POINTS] Loaded {len(POINTS)} positions from {POINTS_CSV}")
+
+# ==================== Grid Frame Processing ====================
+
+_grid_executor = ThreadPoolExecutor(max_workers=1)
+
+
+def _process_grid_frame(path: str) -> bytes:
+    """Read a camera frame, crop it, overlay 4×4 grid with numbers 1-16.
+    Runs in a thread-pool so it doesn't block the async event loop.
+    Matches the crop/grid logic in capture_video4.sh."""
+    import cv2  # lazy import — CPU-only ops, no CUDA needed
+
+    frame = cv2.imread(path)
+    if frame is None:
+        raise ValueError("Cannot read frame")
+
+    height, width = frame.shape[:2]
+    # Crop: horizontal 5%-55%, vertical 30%-85%
+    x_start, x_end = int(width * 0.05), int(width * 0.55)
+    y_start, y_end = int(height * 0.30), int(height * 0.85)
+    cropped = frame[y_start:y_end, x_start:x_end]
+
+    h, w = cropped.shape[:2]
+    # Draw 3 vertical + 3 horizontal green lines → 4×4 grid
+    for i in range(1, 4):
+        cv2.line(cropped, (int(w * i / 4), 0), (int(w * i / 4), h), (0, 255, 0), 1)
+        cv2.line(cropped, (0, int(h * i / 4)), (w, int(h * i / 4)), (0, 255, 0), 1)
+
+    # Number each cell 1-16
+    cell_w, cell_h = w / 4, h / 4
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for row in range(4):
+        for col in range(4):
+            num = row * 4 + col + 1
+            text = str(num)
+            (tw, th), _ = cv2.getTextSize(text, font, 0.8, 2)
+            xc = int((col + 0.5) * cell_w)
+            yc = int((row + 0.5) * cell_h)
+            cv2.putText(cropped, text, (xc - tw // 2, yc + th // 2),
+                        font, 0.8, (0, 255, 0), 2)
+
+    _, buf = cv2.imencode(".jpg", cropped, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return buf.tobytes()
+
+
+# Arm-move concurrency guard
+_arm_moving = False
 
 # ==================== State Management ====================
 
@@ -332,6 +405,10 @@ class FeedbackRequest(BaseModel):
     tags: Optional[list[str]] = None
 
 
+class MoveToPointRequest(BaseModel):
+    point: int
+
+
 @app.post("/api/start")
 async def api_start():
     """Send START command — inference begins immediately (model already loaded)."""
@@ -481,6 +558,101 @@ async def api_frame(cam_name: str):
     except Exception:
         return Response(status_code=503, content=b"Frame read error", media_type="text/plain")
 
+
+# ==================== Grid Frame (16-grid overlay) ====================
+
+@app.get("/api/frame-grid/{cam_name}")
+async def api_frame_grid(cam_name: str):
+    """Return the camera frame cropped and overlaid with a 4×4 numbered grid."""
+    path = os.path.join(FRAME_DIR, f"{cam_name}.jpg")
+    if not os.path.exists(path):
+        return Response(status_code=404, content=b"No frame", media_type="text/plain")
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(_grid_executor, _process_grid_frame, path)
+        return Response(
+            content=data,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
+    except Exception:
+        return Response(status_code=503, content=b"Grid processing error", media_type="text/plain")
+
+
+# ==================== Points / Arm Move ====================
+
+@app.get("/api/points")
+async def api_points():
+    """Return the loaded joint positions from point.csv."""
+    return {"count": len(POINTS), "joint_names": JOINT_NAMES, "points": POINTS}
+
+
+@app.post("/api/move-to-point")
+async def api_move_to_point(req: MoveToPointRequest):
+    """Move the robot arm to a pre-defined joint position from point.csv.
+
+    Uses a separate ROS2 subprocess (with ros2 env sourced) so it works
+    independently of eval_act_safe.py.
+    """
+    global _arm_moving
+
+    if _arm_moving:
+        return {"status": "error", "message": "Arm is already moving"}
+
+    if not POINTS:
+        return {"status": "error", "message": "No points loaded from CSV"}
+
+    if req.point < 1 or req.point > len(POINTS):
+        return {"status": "error", "message": f"Invalid point {req.point}. Range: 1-{len(POINTS)}"}
+
+    # Block movement during active inference or warmup
+    if robot.state in ("WORKING", "WARMUP"):
+        return {"status": "error", "message": f"Cannot move arm while state is {robot.state}"}
+
+    positions = POINTS[req.point - 1]
+    params = json.dumps({
+        "joint_names": JOINT_NAMES,
+        "positions": positions,
+        "move_time": 0.7,
+    })
+
+    arm_mover = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_arm_mover.py")
+    cmd = f'source {ROS2_SETUP} && source {ROS2_WS_SETUP} && python "{arm_mover}" \'{params}\''
+
+    _arm_moving = True
+    robot.log_event("MOVE_TO_POINT", {"point": req.point, "positions": positions})
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            executable="/bin/bash",
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+        output = stdout.decode("utf-8", errors="replace").strip()
+
+        # Parse the last JSON line from output
+        for line in reversed(output.split("\n")):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    pass
+
+        return {"status": "error", "message": f"Unexpected output: {output[:200]}"}
+    except asyncio.TimeoutError:
+        return {"status": "error", "message": "Movement timed out (15s)"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:200]}
+    finally:
+        _arm_moving = False
+
+
 # ==================== WebSocket ====================
 
 @app.websocket("/ws")
@@ -515,12 +687,15 @@ async def startup():
     print(f"  Control    : {CONTROL_FILE}")
     print(f"  Hand     : {'ON' if HAND_DETECT_ENABLED else 'OFF'}")
     print("-" * 55)
-    print("  POST /api/start       → Start inference (instant)")
-    print("  POST /api/stop        → Emergency stop")
-    print("  POST /api/reset       → Go to home")
-    print("  POST /api/resume      → Resume inference")
-    print("  POST /api/quit        → Quit & re-warm")
-    print("  POST /api/hand-detect → Toggle hand safety")
+    print("  POST /api/start          → Start inference (instant)")
+    print("  POST /api/stop           → Emergency stop")
+    print("  POST /api/reset          → Go to home")
+    print("  POST /api/resume         → Resume inference")
+    print("  POST /api/quit           → Quit & re-warm")
+    print("  POST /api/hand-detect    → Toggle hand safety")
+    print("  GET  /api/frame-grid/:c  → 16-grid camera frame")
+    print("  GET  /api/points         → List preposition points")
+    print(f"  POST /api/move-to-point  → Move arm (1-{len(POINTS)} points)")
     print("=" * 55)
     print("  Auto-warming up model + robot...\n")
 

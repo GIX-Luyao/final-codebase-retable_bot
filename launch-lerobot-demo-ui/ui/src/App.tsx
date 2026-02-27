@@ -160,6 +160,185 @@ const CameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnable
 }
 
 /* ================================================================
+   Grid Camera Feed (16-grid overlay)
+   ================================================================ */
+
+const GridCameraFeed: FC<{ active: boolean }> = ({ active }) => {
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [hasFrame, setHasFrame] = useState(false)
+
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+
+    const refresh = () => {
+      if (cancelled || !imgRef.current) return
+      const loader = new Image()
+      loader.onload = () => {
+        if (!cancelled && imgRef.current) {
+          imgRef.current.src = loader.src
+          setHasFrame(true)
+        }
+      }
+      loader.onerror = () => {
+        if (!cancelled) setHasFrame(false)
+      }
+      loader.src = `/api/frame-grid/front?t=${Date.now()}`
+    }
+
+    refresh()
+    const id = setInterval(refresh, 300) // ~3fps for grid view
+    return () => { cancelled = true; clearInterval(id) }
+  }, [active])
+
+  return (
+    <div className="relative rounded-xl overflow-hidden bg-gray-800/70 border border-gray-700/50">
+      <img
+        ref={imgRef}
+        alt="Grid View"
+        className={`w-full h-auto block transition-opacity duration-300 ${hasFrame ? 'opacity-100' : 'opacity-0'}`}
+      />
+      {!hasFrame && (
+        <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
+          📷 Waiting for grid view…
+        </div>
+      )}
+      {/* Label */}
+      <div className="absolute top-2 left-2 px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-lg text-xs font-mono uppercase tracking-wide text-gray-200">
+        🔲 16-Grid View
+      </div>
+      {/* Live indicator */}
+      {hasFrame && (
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-lg">
+          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-[10px] font-semibold text-red-400 uppercase">Live</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ================================================================
+   Point Mover (move arm to preposition 1-16)
+   ================================================================ */
+
+const PointMover: FC<{ enabled: boolean; toast: (msg: string, type: 'success' | 'error' | 'info') => void }> = ({ enabled, toast: showToast }) => {
+  const [pointNum, setPointNum] = useState('')
+  const [moving, setMoving] = useState(false)
+  const [lastResult, setLastResult] = useState<{ status: string; message: string } | null>(null)
+
+  const handleMove = async (num?: number) => {
+    const target = num ?? parseInt(pointNum)
+    if (isNaN(target) || target < 1 || target > 16) {
+      setLastResult({ status: 'error', message: 'Enter 1-16' })
+      return
+    }
+
+    setMoving(true)
+    setLastResult(null)
+
+    try {
+      const r = await fetch('/api/move-to-point', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ point: target }),
+      })
+      const data = await r.json()
+      setLastResult(data)
+      if (data.status === 'ok') {
+        showToast(`Moved to position ${target}`, 'success')
+      } else {
+        showToast(data.message || 'Move failed', 'error')
+      }
+    } catch {
+      setLastResult({ status: 'error', message: 'Network error' })
+      showToast('Move failed: network error', 'error')
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleMove()
+  }
+
+  return (
+    <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-5 space-y-4">
+      <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
+        🎯 Move to Position
+      </h3>
+
+      {/* Input + Go button */}
+      <div className="flex gap-3">
+        <input
+          type="number"
+          min={1}
+          max={16}
+          value={pointNum}
+          onChange={(e) => setPointNum(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="1-16"
+          disabled={!enabled || moving}
+          className="flex-1 px-4 py-3 bg-gray-700 rounded-xl text-white text-lg text-center
+                     placeholder-gray-500 border border-gray-600 focus:border-blue-500 focus:outline-none
+                     disabled:opacity-40 disabled:cursor-not-allowed
+                     [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <button
+          onClick={() => handleMove()}
+          disabled={!enabled || moving || !pointNum}
+          className={`px-6 py-3 rounded-xl font-bold text-lg transition-all duration-200
+                     ${enabled && !moving && pointNum
+                       ? 'bg-blue-600 hover:bg-blue-500 active:bg-blue-700 shadow-lg shadow-blue-600/25'
+                       : 'bg-gray-700 opacity-40 cursor-not-allowed'}`}
+        >
+          {moving ? '⏳' : '▶'}
+        </button>
+      </div>
+
+      {/* Quick-select grid (4×4) */}
+      <div className="grid grid-cols-4 gap-1.5">
+        {Array.from({ length: 16 }, (_, i) => i + 1).map(n => (
+          <button
+            key={n}
+            onClick={() => { setPointNum(String(n)); handleMove(n) }}
+            disabled={!enabled || moving}
+            className={`py-2 rounded-lg text-sm font-semibold transition-all duration-150
+                       ${!enabled || moving
+                         ? 'bg-gray-700/50 text-gray-600 cursor-not-allowed'
+                         : 'bg-gray-700 hover:bg-blue-600 active:bg-blue-700 text-gray-300 hover:text-white'}`}
+          >
+            {n}
+          </button>
+        ))}
+      </div>
+
+      {/* Result message */}
+      {lastResult && (
+        <p className={`text-sm text-center font-medium ${lastResult.status === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
+          {lastResult.message}
+        </p>
+      )}
+
+      {/* Disabled hint */}
+      {!enabled && !moving && (
+        <p className="text-xs text-gray-600 text-center">
+          Available when robot is Ready / Home / Done
+        </p>
+      )}
+
+      {/* Moving indicator */}
+      {moving && (
+        <div className="flex items-center justify-center gap-2 text-blue-400">
+          <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm font-medium">Moving arm…</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ================================================================
    App
    ================================================================ */
 
@@ -266,6 +445,7 @@ function App() {
   const isRunning  = state === 'WORKING'
   const isPaused   = state === 'PAUSED' || state === 'HOMED'
   const hasProcess = isRunning || isPaused
+  const canMoveToPoint = state === 'READY' || state === 'HOMED' || state === 'DONE' || state === 'PAUSED'
 
   /* ================================================================
      Render
@@ -284,8 +464,11 @@ function App() {
         </div>
       </header>
 
-      {/* ── Main ── */}
-      <main className="flex-1 flex flex-col items-center w-full px-6 md:px-10 py-6 md:py-10">
+      {/* ── Main — two-column on large screens ── */}
+      <main className="flex-1 flex flex-col lg:flex-row w-full px-6 md:px-10 py-6 md:py-10 gap-6 lg:gap-8">
+
+        {/* ════════════ Left Column: Main Controls ════════════ */}
+        <div className="flex-1 flex flex-col items-center min-w-0">
 
         {/* ─── State Orb ─── */}
         <div className="flex flex-col items-center mb-6 md:mb-10">
@@ -470,6 +653,18 @@ function App() {
             ⛔&ensp;Emergency Stop
           </button>
         </div>
+
+        </div>{/* end left column */}
+
+        {/* ════════════ Right Column: Grid Camera + Point Control ════════════ */}
+        <div className="w-full lg:w-[420px] xl:w-[480px] flex-shrink-0 flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start">
+          <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
+            Position Control
+          </h3>
+          <GridCameraFeed active={!isWarmup && state !== 'ERROR'} />
+          <PointMover enabled={canMoveToPoint} toast={toast} />
+        </div>
+
       </main>
 
       {/* ── Toasts ── */}
