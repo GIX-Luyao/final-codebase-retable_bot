@@ -380,6 +380,7 @@ def check_control_file(control_file: str, events: dict, hand_detector: "HandDete
     cmd = read_control_command(control_file)
     if not cmd:
         return
+    logger.info(f"Control command received: {cmd}")
     if cmd == "ESTOP":
         events["emergency_stop"] = True
         events["exit_early"] = True
@@ -461,18 +462,19 @@ def wait_for_command(control_file: str, events: dict, target_cmd: str = "START",
             try:
                 point_idx = int(cmd.split(":")[1])
                 if 1 <= point_idx <= len(goto_points):
+                    print(f"GOTO_STARTED:{point_idx}", flush=True)
+                    logger.info(f"Converting point {point_idx} to lerobot space...")
                     target = _radians_to_lerobot(goto_points[point_idx - 1],
                                                   goto_joint_names, robot)
-                    print(f"GOTO_STARTED:{point_idx}", flush=True)
-                    logger.info(f"Moving to point {point_idx} while waiting...")
+                    logger.info(f"Moving to point {point_idx}: {target}")
                     go_to_rest_position(robot, rest_position=target,
                                         fps=30, duration_s=2.0, events=events)
                     print(f"GOTO_DONE:{point_idx}", flush=True)
                     logger.info(f"Point {point_idx} reached (still waiting for START).")
                 else:
                     logger.error(f"GOTO point {point_idx} out of range 1-{len(goto_points)}")
-            except (ValueError, IndexError) as e:
-                logger.error(f"Invalid GOTO command: {cmd}: {e}")
+            except Exception as e:
+                logger.error(f"GOTO command failed: {cmd}: {e}", exc_info=True)
 
         # Check keyboard events (Esc → quit)
         if events.get("stop_recording"):
@@ -571,6 +573,27 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                         home_pos = robot.bus.sync_read("Present_Position")
                         while events.get("emergency_stop"):
                             check_control_file(args.control_file, events, hand_detector)
+                            # Handle new GOTO/HOME while holding position
+                            if events.get("go_to_rest"):
+                                _gi = events.pop("_goto_point_idx", None)
+                                if _gi is not None and goto_points and 1 <= _gi <= len(goto_points):
+                                    _tp = _radians_to_lerobot(goto_points[_gi - 1], goto_joint_names, robot)
+                                    print(f"GOTO_STARTED:{_gi}", flush=True)
+                                else:
+                                    _tp = robot.rest_position
+                                    _gi = None
+                                events["go_to_rest"] = False
+                                events["exit_early"] = False
+                                events["emergency_stop"] = False
+                                go_to_rest_position(robot, rest_position=_tp,
+                                                    fps=args.fps, duration_s=args.rest_duration, events=events)
+                                if _gi is not None:
+                                    print(f"GOTO_DONE:{_gi}", flush=True)
+                                else:
+                                    print("GOTO_DONE:HOME", flush=True)
+                                events["emergency_stop"] = True
+                                home_pos = robot.bus.sync_read("Present_Position")
+                                continue
                             robot.bus.sync_write("Goal_Position", home_pos)
                             _now = time.perf_counter()
                             if _now - _last_ft > 0.2:
@@ -615,6 +638,27 @@ def run_episodes(args, model, preprocess, postprocess, robot, ds_features, devic
                 _last_ft2 = 0.0
                 while events.get("emergency_stop"):
                     check_control_file(args.control_file, events, hand_detector)
+                    # Handle new GOTO/HOME while holding position
+                    if events.get("go_to_rest"):
+                        _gi = events.pop("_goto_point_idx", None)
+                        if _gi is not None and goto_points and 1 <= _gi <= len(goto_points):
+                            _tp = _radians_to_lerobot(goto_points[_gi - 1], goto_joint_names, robot)
+                            print(f"GOTO_STARTED:{_gi}", flush=True)
+                        else:
+                            _tp = robot.rest_position
+                            _gi = None
+                        events["go_to_rest"] = False
+                        events["exit_early"] = False
+                        events["emergency_stop"] = False
+                        go_to_rest_position(robot, rest_position=_tp,
+                                            fps=args.fps, duration_s=args.rest_duration, events=events)
+                        if _gi is not None:
+                            print(f"GOTO_DONE:{_gi}", flush=True)
+                        else:
+                            print("GOTO_DONE:HOME", flush=True)
+                        events["emergency_stop"] = True
+                        home_pos = robot.bus.sync_read("Present_Position")
+                        continue
                     robot.bus.sync_write("Goal_Position", home_pos)
                     _now = time.perf_counter()
                     if _now - _last_ft2 > 0.2:
