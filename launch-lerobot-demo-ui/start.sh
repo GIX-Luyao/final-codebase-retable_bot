@@ -57,6 +57,24 @@ stop_all() {
     kill_by_port $BACKEND_PORT
     kill_by_port $FRONTEND_PORT
 
+    # Kill orphaned eval_pipeline.py / eval_act_safe.py processes
+    # These run in their own session (start_new_session=True) and may survive backend shutdown
+    local orphans
+    orphans=$(pgrep -f "eval_pipeline\.py|eval_act_safe\.py" 2>/dev/null || true)
+    if [ -n "$orphans" ]; then
+        warn "Killing orphaned inference processes (PIDs: $orphans)"
+        echo "$orphans" | xargs kill -9 2>/dev/null || true
+        sleep 1
+    fi
+
+    # Kill any lingering camera worker processes
+    local cam_workers
+    cam_workers=$(pgrep -f "_camera_worker\.py" 2>/dev/null || true)
+    if [ -n "$cam_workers" ]; then
+        warn "Killing camera worker processes (PIDs: $cam_workers)"
+        echo "$cam_workers" | xargs kill -9 2>/dev/null || true
+    fi
+
     ok "All processes stopped."
 }
 

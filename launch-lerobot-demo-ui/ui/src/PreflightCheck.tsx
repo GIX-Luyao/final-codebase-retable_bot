@@ -652,7 +652,7 @@ export default function PreflightCheck({ onComplete }: PreflightCheckProps) {
                     // Poll /api/config (main_robot endpoint) until it responds
                     setLaunchStatus('Waiting for robot control server to start…')
                     let attempts = 0
-                    const maxAttempts = 60   // 60 × 1s = 60s timeout
+                    const maxAttempts = 120   // 120 × 0.5s = 60s timeout
                     const pollTimer = setInterval(async () => {
                       attempts++
                       try {
@@ -660,7 +660,7 @@ export default function PreflightCheck({ onComplete }: PreflightCheckProps) {
                         if (res.ok) {
                           clearInterval(pollTimer)
                           setLaunchStatus('Robot control server ready! Reloading…')
-                          setTimeout(() => window.location.reload(), 800)
+                          setTimeout(() => window.location.reload(), 300)
                           return
                         }
                       } catch { /* still starting */ }
@@ -670,9 +670,10 @@ export default function PreflightCheck({ onComplete }: PreflightCheckProps) {
                         setLaunchStatus('')
                         alert('Timed out waiting for control server.\nRun manually:\nbash start.sh stop && bash start.sh')
                       } else {
-                        setLaunchStatus(`Waiting for robot control server… (${attempts}s)`)
+                        const secs = Math.round(attempts * 0.5)
+                        setLaunchStatus(`Waiting for robot control server… (${secs}s)`)
                       }
-                    }, 1000)
+                    }, 500)
                   }}
                   className="flex-1 py-5 rounded-2xl text-lg font-bold bg-gradient-to-r from-blue-600 to-blue-500
                              hover:from-blue-500 hover:to-blue-400 shadow-xl shadow-blue-500/25

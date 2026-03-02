@@ -15,6 +15,10 @@ interface StatusMessage {
   hand_detect?: boolean
   hand_detected?: boolean
   auto_stopped?: boolean
+  pipeline_stage?: string
+  pipeline_stage_idx?: number
+  pipeline_total?: number
+  pipeline_status?: string   // "inference" | "waypoints" | "loading" | ""
 }
 
 interface Toast {
@@ -357,6 +361,10 @@ function App() {
   const [handDetect, setHandDetect]       = useState(true)
   const [handDetected, setHandDetected]   = useState(false)
   const [autoStopped, setAutoStopped]     = useState(false)
+  const [pipelineStage, setPipelineStage]     = useState('')
+  const [pipelineStageIdx, setPipelineStageIdx] = useState(0)
+  const [pipelineTotal, setPipelineTotal]     = useState(0)
+  const [pipelineStatus, setPipelineStatus]   = useState('')
 
   const wsRef     = useRef<WebSocket | null>(null)
   const reconnRef = useRef<number | null>(null)
@@ -427,6 +435,10 @@ function App() {
           if (d.hand_detect !== undefined)  setHandDetect(d.hand_detect)
           if (d.hand_detected !== undefined) setHandDetected(d.hand_detected)
           if (d.auto_stopped !== undefined) setAutoStopped(d.auto_stopped)
+          if (d.pipeline_stage !== undefined)     setPipelineStage(d.pipeline_stage)
+          if (d.pipeline_stage_idx !== undefined) setPipelineStageIdx(d.pipeline_stage_idx)
+          if (d.pipeline_total !== undefined)     setPipelineTotal(d.pipeline_total)
+          if (d.pipeline_status !== undefined)    setPipelineStatus(d.pipeline_status)
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
@@ -488,6 +500,53 @@ function App() {
             {autoStopped && isPaused ? '🖐️ Hand Stop' : meta.label}
           </p>
         </div>
+
+        {/* ─── Pipeline Stage Indicator ─── */}
+        {pipelineTotal > 0 && (
+          <div className="w-full max-w-2xl mb-4 md:mb-6">
+            <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-4 md:p-5">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs md:text-sm uppercase tracking-wider text-gray-500 font-medium">Pipeline</span>
+                {pipelineStage && (
+                  <span className={`text-xs md:text-sm font-bold px-2.5 py-1 rounded-lg ${
+                    pipelineStatus === 'inference' ? 'bg-blue-500/20 text-blue-400' :
+                    pipelineStatus === 'waypoints' ? 'bg-violet-500/20 text-violet-400' :
+                    pipelineStatus === 'loading'   ? 'bg-cyan-500/20 text-cyan-400' :
+                    'bg-gray-700 text-gray-400'
+                  }`}>
+                    {pipelineStatus === 'inference' ? '⚡ Inference' :
+                     pipelineStatus === 'waypoints' ? '📍 Waypoints' :
+                     pipelineStatus === 'loading'   ? '🔄 Loading' : ''}
+                  </span>
+                )}
+              </div>
+              {/* Stage steps */}
+              <div className="flex items-center gap-2">
+                {Array.from({ length: pipelineTotal }, (_, i) => {
+                  const isActive = i === pipelineStageIdx && (isRunning || pipelineStatus !== '')
+                  const isDone = i < pipelineStageIdx || state === 'DONE'
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
+                      <div className={`w-full h-2 rounded-full transition-all duration-500 ${
+                        isDone ? 'bg-emerald-500' :
+                        isActive ? (pipelineStatus === 'waypoints' ? 'bg-violet-500 animate-pulse' : 'bg-blue-500 animate-pulse') :
+                        'bg-gray-700'
+                      }`} />
+                      <span className={`text-[10px] md:text-xs font-semibold truncate max-w-full ${
+                        isDone ? 'text-emerald-400' :
+                        isActive ? 'text-blue-400' :
+                        'text-gray-600'
+                      }`}>
+                        {/* Show stage name from step field if available */}
+                        {i === pipelineStageIdx && pipelineStage ? pipelineStage : `Stage ${i + 1}`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ─── Status Info Card ─── */}
         <div className="w-full max-w-2xl bg-gray-800/60 backdrop-blur rounded-2xl md:rounded-3xl p-6 md:p-8 space-y-4 mb-6 md:mb-10">
@@ -587,6 +646,7 @@ function App() {
 
           {/* Primary: Start */}
           {canStart && (
+            <>
             <button
               onClick={doStart}
               className="w-full py-6 md:py-8 rounded-2xl text-xl md:text-2xl lg:text-3xl font-bold
@@ -597,6 +657,16 @@ function App() {
             >
               ▶&ensp;Start Inference
             </button>
+            {/* Home button available before starting */}
+            <button
+              onClick={doHome}
+              className="w-full py-4 md:py-5 rounded-2xl text-lg md:text-xl font-bold
+                         bg-violet-600/80 hover:bg-violet-500 active:bg-violet-700
+                         transition-colors duration-150"
+            >
+              🏠&ensp;Reset to Home
+            </button>
+            </>
           )}
 
           {/* Primary: Resume */}
@@ -656,15 +726,6 @@ function App() {
         </div>
 
         </div>{/* end left column */}
-
-        {/* ════════════ Right Column: Grid Camera + Point Control ════════════ */}
-        <div className="w-full lg:w-[420px] xl:w-[480px] flex-shrink-0 flex flex-col gap-4 lg:sticky lg:top-6 lg:self-start">
-          <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
-            Position Control
-          </h3>
-          <PointMover enabled={canMoveToPoint} toast={toast} />
-          <GridCameraFeed active={!isWarmup && state !== 'ERROR'} />
-        </div>
 
       </main>
 

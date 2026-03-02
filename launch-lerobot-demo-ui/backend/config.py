@@ -1,61 +1,121 @@
 """
-Robot Configuration for eval_act_safe.py Integration
+Robot Configuration for eval_pipeline.py Integration
 
-Parameters match eval_act_andy_tube.sh exactly.
-Includes hand safety detection configuration.
+Multi-model pipeline: each stage runs a model, monitors a trigger condition,
+then moves through waypoints before loading the next model.
+Easily extensible — just add entries to PIPELINE_STAGES.
 """
 
 import os
 
-# Control file path — shared between backend and eval_act_safe.py
+# Control file path — shared between backend and eval_pipeline.py
 CONTROL_FILE = "/tmp/lerobot_cmd"
 
-# Directory where eval_act_safe.py writes JPEG frames for UI camera streaming
+# Directory where eval_pipeline.py writes JPEG frames for UI camera streaming
 FRAME_DIR = "/tmp/lerobot_frames"
 
-# ── Configuration (identical to eval_act_andy_tube.sh) ──
-ROBOT_CONFIG = {
-    "model": "FrankYuzhe/act_tissue_box_0226_merged_80_0226_221249",
-    "robot_port": "/dev/ttyACM0",
-    "robot_id": "follower_hope",
-    "cameras": "front:/dev/video4,wrist:/dev/video6",
-    "fps": 30,
-    "episode_time": 200,
-    "num_episodes": 10,
-    "device": "cuda",
-    "rest_duration": 2.0,
-}
+# Path to the lerobot repo
+LEROBOT_DIR = os.path.expanduser("~/lerobot")
+
+# ── Robot Hardware ──
+ROBOT_PORT = "/dev/ttyACM0"
+ROBOT_ID = "follower_hope"
+CAMERAS = "front:/dev/video4,wrist:/dev/video8"
+FPS = 30
+DEVICE = "cuda"
 
 # ── Hand Safety Detection ──
-HAND_DETECT_ENABLED = True        # Enable hand detection at startup
-HAND_DETECT_CAMERA = "front"      # Which camera to monitor
-HAND_DETECT_INTERVAL = 0.25       # Seconds between checks (~4fps)
-HAND_DETECT_COOLDOWN = 8          # Consecutive no-hand frames before auto-resume (~2s)
+HAND_DETECT_ENABLED = True
+HAND_DETECT_CAMERA = "front"
+HAND_DETECT_INTERVAL = 0.25
+HAND_DETECT_COOLDOWN = 8
 
-# Path to the lerobot repo (where eval_act_safe.py lives)
-LEROBOT_DIR = os.path.expanduser("~/lerobot")
+# ── Waypoints (saved_positions.json) — LeRobot normalized values ──
+WAYPOINTS_JSON = os.path.join(LEROBOT_DIR, "saved_positions.json")
 
 # ── Points CSV — joint positions for 16-grid prepositions (ROS2 radians) ──
 POINTS_CSV = os.path.join(LEROBOT_DIR, "point.csv")
 
+# ════════════════════════════════════════════════════════════════════════
+#  PIPELINE STAGES — Each stage: run a model, trigger → waypoints → next
+#
+#  To add a new object/model, just append another dict to this list.
+#  Fields:
+#    name          — human-readable stage name
+#    model         — HuggingFace model ID
+#    trigger_joint — joint name to monitor (without ".pos" suffix)
+#    trigger_op    — "lt" (less than) or "gt" (greater than)
+#    trigger_value — threshold value (LeRobot normalized)
+#    waypoints     — list of waypoint names from saved_positions.json
+#                    (or "all" to use all waypoints in order)
+#    waypoint_duration — seconds per waypoint movement (slower = safer)
+#    episode_time  — max seconds per episode
+#    num_episodes  — number of episodes to run
+# ════════════════════════════════════════════════════════════════════════
+
+PIPELINE_STAGES = [
+    {
+        "name": "Cup",
+        "model": "FrankYuzhe/act_cup_box_0301_merged_80",
+        "trigger_joint": "shoulder_pan",
+        "trigger_op": "lt",        # less than
+        "trigger_value": -25.0,
+        "waypoints": "all",        # use all waypoints from saved_positions.json
+        "waypoint_duration": 0.8,  # 0.8 seconds per waypoint (fast transition)
+        "episode_time": 200,
+        "num_episodes": 10,
+    },
+    {
+        "name": "Lemon",
+        "model": "FrankYuzhe/act_lemon_box_0226_merged_160_ckpt_040000",
+        "trigger_joint": "shoulder_pan",
+        "trigger_op": "lt",
+        "trigger_value": -25.0,
+        "waypoints": "all",
+        "waypoint_duration": 0.8,
+        "episode_time": 200,
+        "num_episodes": 10,
+    },
+    {
+        "name": "Tissue",
+        "model": "FrankYuzhe/act_tissue_box_0226_merged_80_0226_221249",
+        "trigger_joint": "shoulder_pan",
+        "trigger_op": "lt",
+        "trigger_value": -25.0,
+        "waypoints": "all",
+        "waypoint_duration": 0.8,
+        "episode_time": 200,
+        "num_episodes": 10,
+    },
+]
+
+# ── Legacy single-model config (for backward compatibility) ──
+ROBOT_CONFIG = {
+    "model": PIPELINE_STAGES[0]["model"] if PIPELINE_STAGES else "",
+    "robot_port": ROBOT_PORT,
+    "robot_id": ROBOT_ID,
+    "cameras": CAMERAS,
+    "fps": FPS,
+    "episode_time": PIPELINE_STAGES[0].get("episode_time", 200) if PIPELINE_STAGES else 200,
+    "num_episodes": PIPELINE_STAGES[0].get("num_episodes", 10) if PIPELINE_STAGES else 10,
+    "device": DEVICE,
+    "rest_duration": 2.0,
+}
+
 
 def build_inference_command(task: str = None) -> list[str]:
-    """Build the eval_act_safe.py command — same params as eval_act_andy_tube.sh."""
-    cfg = ROBOT_CONFIG
+    """Build the eval_pipeline.py command for multi-model pipeline."""
     cmd = [
-        "python", os.path.join(LEROBOT_DIR, "eval_act_safe.py"),
-        "--model", cfg["model"],
-        "--robot-port", cfg["robot_port"],
-        "--robot-id", cfg["robot_id"],
-        "--cameras", cfg["cameras"],
-        "--fps", str(cfg["fps"]),
-        "--episode-time", str(cfg["episode_time"]),
-        "--num-episodes", str(cfg["num_episodes"]),
-        "--device", cfg["device"],
-        "--rest-duration", str(cfg["rest_duration"]),
+        "python", os.path.join(LEROBOT_DIR, "eval_pipeline.py"),
+        "--robot-port", ROBOT_PORT,
+        "--robot-id", ROBOT_ID,
+        "--cameras", CAMERAS,
+        "--fps", str(FPS),
+        "--device", DEVICE,
         "--control-file", CONTROL_FILE,
         "--wait-for-start",
         "--frame-dir", FRAME_DIR,
+        "--pipeline-config", os.path.join(LEROBOT_DIR, "launch-lerobot-demo-ui", "backend", "config.py"),
     ]
     # Hand safety detection
     if HAND_DETECT_ENABLED:

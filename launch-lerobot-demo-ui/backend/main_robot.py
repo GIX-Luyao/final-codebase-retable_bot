@@ -28,7 +28,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import (build_inference_command, ROBOT_CONFIG, CONTROL_FILE, LEROBOT_DIR, FRAME_DIR,
-                     HAND_DETECT_ENABLED, POINTS_CSV)
+                     HAND_DETECT_ENABLED, POINTS_CSV, PIPELINE_STAGES)
 
 app = FastAPI(title="LeRobot SO101 Control Backend")
 
@@ -126,6 +126,11 @@ class RobotState:
         self.hand_detect_enabled = HAND_DETECT_ENABLED
         self.hand_detected = False
         self.auto_stopped = False
+        # Pipeline state
+        self.pipeline_stage = ""       # Current stage name (e.g. "Lemon", "Tissue")
+        self.pipeline_stage_idx = 0    # 0-based index
+        self.pipeline_total = len(PIPELINE_STAGES)
+        self.pipeline_status = ""      # "inference" | "waypoints" | "loading" | ""
         
     def to_dict(self):
         return {
@@ -136,6 +141,10 @@ class RobotState:
             "hand_detect": self.hand_detect_enabled,
             "hand_detected": self.hand_detected,
             "auto_stopped": self.auto_stopped,
+            "pipeline_stage": self.pipeline_stage,
+            "pipeline_stage_idx": self.pipeline_stage_idx,
+            "pipeline_total": self.pipeline_total,
+            "pipeline_status": self.pipeline_status,
         }
     
     def log_event(self, event: str, details: dict = None):
@@ -186,7 +195,7 @@ def send_control_command(cmd: str):
 # ==================== Output Parser ====================
 
 def parse_output(line: str) -> dict:
-    """Parse eval_act_safe.py stdout and return state updates."""
+    """Parse eval_pipeline.py stdout and return state updates."""
     lo = line.lower()
     raw = line.strip()
     
@@ -206,18 +215,95 @@ def parse_output(line: str) -> dict:
     if "ready_for_start" in lo:
         return {"_signal": "READY_FOR_START"}
     if "inference_started" in lo:
-        return {"state": "WORKING", "step": "Running", "message": "Inference started!", "progress": 0}
+        return {"state": "WORKING", "step": "Running", "message": "Inference started!", "progress": 0,
+                "_pipeline_status": "inference"}
     if "inference_done" in lo:
         return {"_signal": "INFERENCE_DONE"}
+    if "pipeline_restart" in lo:
+        return {"_signal": "PIPELINE_RESTART"}
+    if "pipeline_complete" in lo:
+        return {"_signal": "PIPELINE_COMPLETE"}
+
+    # ── Pipeline stage signals ──
+    import re
+
+    # STAGE_LOADING:StageName
+    m = re.match(r"STAGE_LOADING:(.+)", raw)
+    if m:
+        name = m.group(1)
+        return {"state": "WORKING", "step": f"Loading {name}", 
+                "message": f"Loading model for [{name}]...", "progress": 0,
+                "_pipeline_stage": name, "_pipeline_status": "loading"}
+
+    # STAGE_LOADED:StageName
+    m = re.match(r"STAGE_LOADED:(.+)", raw)
+    if m:
+        name = m.group(1)
+        return {"state": "WORKING", "step": f"{name} ready",
+                "message": f"Model [{name}] loaded, starting inference...",
+                "_pipeline_stage": name, "_pipeline_status": "inference"}
+
+    # STAGE_STARTED:StageName
+    m = re.match(r"STAGE_STARTED:(.+)", raw)
+    if m:
+        name = m.group(1)
+        return {"state": "WORKING", "step": f"[{name}] Running",
+                "message": f"Running [{name}] inference...", "progress": 0,
+                "_pipeline_stage": name, "_pipeline_status": "inference"}
+
+    # STAGE_TRIGGERED:StageName
+    m = re.match(r"STAGE_TRIGGERED:(.+)", raw)
+    if m:
+        name = m.group(1)
+        return {"state": "WORKING", "step": f"[{name}] Triggered",
+                "message": f"[{name}] trigger condition met → moving to waypoints",
+                "_pipeline_stage": name, "_pipeline_status": "waypoints"}
+
+    # STAGE_COMPLETE:StageName:reason
+    m = re.match(r"STAGE_COMPLETE:(.+):(.+)", raw)
+    if m:
+        name, reason = m.group(1), m.group(2)
+        return {"step": f"[{name}] Complete",
+                "message": f"Stage [{name}] complete ({reason})",
+                "_pipeline_stage": name}
+
+    # WAYPOINTS_STARTED:count
+    m = re.match(r"WAYPOINTS_STARTED:(\d+)", raw)
+    if m:
+        count = m.group(1)
+        return {"state": "WORKING", "step": "Waypoints",
+                "message": f"Moving through {count} waypoints...", "progress": 0,
+                "_pipeline_status": "waypoints"}
+
+    # WAYPOINT_STARTED:idx:name
+    m = re.match(r"WAYPOINT_STARTED:(\d+):(.+)", raw)
+    if m:
+        idx, name = m.group(1), m.group(2)
+        return {"step": f"Waypoint {idx}", "message": f"Moving to waypoint {name}..."}
+
+    # WAYPOINT_DONE:idx:name
+    m = re.match(r"WAYPOINT_DONE:(\d+):(.+)", raw)
+    if m:
+        idx, name = m.group(1), m.group(2)
+        return {"step": f"Waypoint {idx}", "message": f"Reached waypoint {name}"}
+
+    # WAYPOINTS_DONE:count
+    m = re.match(r"WAYPOINTS_DONE:(\d+)", raw)
+    if m:
+        return {"step": "Waypoints done", "message": "All waypoints reached",
+                "_pipeline_status": "inference"}
+
+    # PIPELINE_LOADED:count
+    m = re.match(r"PIPELINE_LOADED:(\d+)", raw)
+    if m:
+        return {}  # informational only
 
     # ── GOTO point signals ──
     if "goto_started:" in lo:
-        import re
         m = re.search(r"goto_started:(\S+)", lo)
         idx = m.group(1) if m else "?"
         return {"state": "HOMED", "step": f"Moving to {idx}", "message": f"Moving to position {idx}..."}
     if "goto_done:" in lo:
-        import re
         m = re.search(r"goto_done:(\S+)", lo)
         idx = m.group(1) if m else "?"
         return {"state": "HOMED", "step": "Position reached", "message": f"At position {idx}, paused"}
@@ -242,13 +328,12 @@ def parse_output(line: str) -> dict:
         return {"state": "HOMED", "step": "Home", "message": "At home position, inference paused"}
     if "resumed" in lo or "continuing inference" in lo:
         return {"state": "WORKING", "step": "Running", "message": "Inference resumed",
-                "_hand": False, "_auto": False}
+                "_hand": False, "_auto": False, "_pipeline_status": "inference"}
     
     if "episode" in lo and "/" in lo:
-        return {"step": "Episode", "message": raw[:60]}
+        return {"step": "Episode", "message": raw[:80]}
 
     if "step " in lo:
-        import re
         m = re.search(r"step\s+(\d+)/(\d+)", lo)
         if m:
             cur, total = int(m.group(1)), int(m.group(2))
@@ -256,7 +341,7 @@ def parse_output(line: str) -> dict:
             return {"step": "Inference", "message": f"Step {cur}/{total}", "progress": pct}
     
     if "episode" in lo and "finished" in lo:
-        return {"step": "Episode done", "message": raw[:60], "progress": 100}
+        return {"step": "Episode done", "message": raw[:80], "progress": 100}
     
     if "done" in lo and "✅" in line:
         return {"_signal": "PROCESS_DONE"}
@@ -333,10 +418,30 @@ async def spawn_warmup_process():
                 robot.state = "DONE"
                 robot.step = "Complete"
                 robot.progress = 100
-                robot.message = "Inference session complete"
+                robot.message = "Pipeline complete"
                 robot.hand_detected = False
                 robot.auto_stopped = False
+                robot.pipeline_status = ""
                 robot.log_event("INFERENCE_DONE")
+                await broadcast_state()
+                continue
+            if sig == "PIPELINE_RESTART":
+                robot.state = "WORKING"
+                robot.step = "Restarting"
+                robot.progress = 0
+                robot.message = "Restarting pipeline from stage 1..."
+                robot.pipeline_stage_idx = 0
+                robot.pipeline_status = "loading"
+                robot.log_event("PIPELINE_RESTART")
+                await broadcast_state()
+                continue
+            if sig == "PIPELINE_COMPLETE":
+                robot.state = "DONE"
+                robot.step = "Pipeline Complete"
+                robot.progress = 100
+                robot.message = "All stages complete!"
+                robot.pipeline_status = ""
+                robot.log_event("PIPELINE_COMPLETE")
                 await broadcast_state()
                 continue
             if sig == "PROCESS_DONE":
@@ -359,6 +464,17 @@ async def spawn_warmup_process():
                 robot.hand_detected = updates.pop("_hand")
             if "_auto" in updates:
                 robot.auto_stopped = updates.pop("_auto")
+
+            # Update pipeline sub-state
+            if "_pipeline_stage" in updates:
+                robot.pipeline_stage = updates.pop("_pipeline_stage")
+                # Derive stage index from name
+                for i, s in enumerate(PIPELINE_STAGES):
+                    if s["name"] == robot.pipeline_stage:
+                        robot.pipeline_stage_idx = i
+                        break
+            if "_pipeline_status" in updates:
+                robot.pipeline_status = updates.pop("_pipeline_status")
 
             # Apply normal state updates
             for k in ("state", "step", "progress", "message"):
@@ -536,6 +652,21 @@ async def api_config():
     return ROBOT_CONFIG
 
 
+@app.get("/api/pipeline")
+async def api_pipeline():
+    """Return pipeline stage configuration."""
+    stages = [{"name": s["name"], "model": s["model"],
+               "trigger": f"{s.get('trigger_joint','')} {s.get('trigger_op','')} {s.get('trigger_value','')}"}
+              for s in PIPELINE_STAGES]
+    return {
+        "stages": stages,
+        "total": len(stages),
+        "current_stage": robot.pipeline_stage,
+        "current_idx": robot.pipeline_stage_idx,
+        "status": robot.pipeline_status,
+    }
+
+
 # ==================== Camera Frame Streaming ====================
 
 @app.get("/api/cameras")
@@ -655,13 +786,15 @@ async def ws_endpoint(websocket: WebSocket):
 @app.on_event("startup")
 async def startup():
     print("\n" + "=" * 55)
-    print("🤖 LeRobot SO101 Control Backend (Pre-warm Mode)")
+    print("🤖 LeRobot SO101 Control Backend (Pipeline Mode)")
     print("=" * 55)
-    print(f"  Model      : {ROBOT_CONFIG['model']}")
+    print(f"  Pipeline   : {len(PIPELINE_STAGES)} stages")
+    for i, s in enumerate(PIPELINE_STAGES):
+        print(f"    {i+1}. [{s['name']}] {s['model'][:50]}...")
     print(f"  Robot      : {ROBOT_CONFIG['robot_id']} @ {ROBOT_CONFIG['robot_port']}")
     print(f"  Cameras    : {ROBOT_CONFIG['cameras']}")
     print(f"  Control    : {CONTROL_FILE}")
-    print(f"  Hand     : {'ON' if HAND_DETECT_ENABLED else 'OFF'}")
+    print(f"  Hand       : {'ON' if HAND_DETECT_ENABLED else 'OFF'}")
     print("-" * 55)
     print("  POST /api/start          → Start inference (instant)")
     print("  POST /api/stop           → Emergency stop")

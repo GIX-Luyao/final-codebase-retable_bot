@@ -13,6 +13,11 @@ All camera operations are delegated to _camera_worker.py which runs
 in a separate subprocess. This prevents CUDA driver corruption that
 would break the main inference process (eval_act_safe.py).
 
+Snapshot delivery uses a PERSISTENT worker process ("serve" mode) that
+keeps cameras open and writes JPEG frames to a shared directory.  This
+avoids the open/close churn that causes green frames on YUYV cameras
+(e.g. RealSense RGB on /dev/video5).
+
 Usage:
     uvicorn preflight_server:app --host 0.0.0.0 --port 8000
 """
@@ -38,19 +43,121 @@ from pydantic import BaseModel
 # ── Constants ──────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.py"
 WORKER_SCRIPT = Path(__file__).parent / "_camera_worker.py"
-CACHE_TTL = 3.0          # seconds to cache a snapshot per device (subprocess = slower)
 DETECT_TIMEOUT = 60      # seconds to wait for camera detection
-SNAPSHOT_TIMEOUT = 30    # seconds to wait for camera snapshot (increased from 15)
+SNAPSHOT_TIMEOUT = 30    # seconds to wait for camera snapshot (fallback one-shot)
 
-# ── Snapshot cache ─────────────────────────────────────────────────────────
-_snapshot_cache: dict[str, tuple[float, bytes]] = {}
+# Directory where the persistent worker writes JPEG frames
+SERVE_FRAME_DIR = "/tmp/lerobot_preflight_frames"
+
+# ── Persistent worker state ───────────────────────────────────────────────
+_serve_process: subprocess.Popen | None = None
+_serve_devices: list[str] = []   # devices currently being served
+
+
+def _start_serve_worker(devices: list[str]) -> None:
+    """Start (or restart) the persistent camera worker for the given devices."""
+    global _serve_process, _serve_devices
+
+    # Kill existing worker if running
+    _stop_serve_worker()
+
+    if not devices:
+        return
+
+    os.makedirs(SERVE_FRAME_DIR, exist_ok=True)
+
+    cmd = [
+        sys.executable, str(WORKER_SCRIPT),
+        "serve", SERVE_FRAME_DIR,
+    ] + devices
+
+    _serve_process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+    )
+    _serve_devices = list(devices)
+
+    # Wait until the worker has written at least one good frame for each device,
+    # or until a generous timeout expires.  This prevents the frontend from
+    # seeing green frames during the YUYV warmup period.
+    deadline = time.monotonic() + 12.0  # up to 12s for slow YUYV cameras
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        # Check if all devices have a fresh .jpg file
+        all_ready = True
+        for dev in devices:
+            fname = dev.replace("/dev/", "").replace("/", "_")
+            jpg_path = os.path.join(SERVE_FRAME_DIR, f"{fname}.jpg")
+            if not os.path.exists(jpg_path):
+                all_ready = False
+                break
+        if all_ready:
+            break
+    # Even if not all cameras are ready, we continue — the serve worker
+    # will keep trying and the fallback one-shot path is still available.
+
+
+def _stop_serve_worker() -> None:
+    """Stop the persistent camera worker if running."""
+    global _serve_process, _serve_devices
+    if _serve_process is not None:
+        try:
+            _serve_process.terminate()
+            _serve_process.wait(timeout=5)
+        except Exception:
+            try:
+                _serve_process.kill()
+            except Exception:
+                pass
+        _serve_process = None
+        _serve_devices = []
+
+
+def _read_served_snapshot(device: str) -> bytes | None:
+    """Read the latest JPEG frame written by the serve worker.
+    Returns None if no frame is available yet.
+    """
+    fname = device.replace("/dev/", "").replace("/", "_")
+    jpg_path = os.path.join(SERVE_FRAME_DIR, f"{fname}.jpg")
+
+    if not os.path.exists(jpg_path):
+        return None
+
+    # Check freshness — if the file is older than 10s, the worker may be stuck
+    try:
+        age = time.time() - os.path.getmtime(jpg_path)
+        if age > 10.0:
+            return None
+    except OSError:
+        return None
+
+    try:
+        with open(jpg_path, "rb") as f:
+            data = f.read()
+        return data if data else None
+    except OSError:
+        return None
+
+
+def _read_served_meta(device: str) -> dict | None:
+    """Read the metadata file for a device from the serve worker."""
+    fname = device.replace("/dev/", "").replace("/", "_")
+    meta_path = os.path.join(SERVE_FRAME_DIR, f"{fname}.meta")
+    try:
+        with open(meta_path) as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
-    _snapshot_cache.clear()
+    _stop_serve_worker()
 
 
 app = FastAPI(title="LeRobot Preflight Check", lifespan=lifespan)
@@ -63,10 +170,7 @@ app.add_middleware(
 )
 
 
-# ── Subprocess helpers ─────────────────────────────────────────────────────
-# All camera work happens in _camera_worker.py subprocess.
-# This ensures the FastAPI process NEVER loads OpenCV / CUDA,
-# preventing GPU driver corruption that would break inference.
+# ── Subprocess helpers (one-shot, for detect) ─────────────────────────────
 
 def _worker_detect_cameras() -> list[dict[str, Any]]:
     """Run _camera_worker.py detect in a subprocess, return camera list."""
@@ -86,14 +190,8 @@ def _worker_detect_cameras() -> list[dict[str, Any]]:
     return json.loads(stdout)
 
 
-def _worker_capture_snapshot(device: str) -> bytes:
-    """Run _camera_worker.py snapshot <device> in a subprocess, return JPEG bytes."""
-    # Check cache first
-    now = time.time()
-    cached = _snapshot_cache.get(device)
-    if cached and (now - cached[0]) < CACHE_TTL:
-        return cached[1]
-
+def _worker_capture_snapshot_oneshot(device: str) -> bytes:
+    """Fallback: one-shot snapshot via subprocess (used if serve worker not running)."""
     try:
         result = subprocess.run(
             [sys.executable, str(WORKER_SCRIPT), "snapshot", device],
@@ -102,8 +200,8 @@ def _worker_capture_snapshot(device: str) -> bytes:
             env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"Snapshot timeout for {device} after {SNAPSHOT_TIMEOUT}s. Camera may be busy or unavailable.")
-    
+        raise RuntimeError(f"Snapshot timeout for {device} after {SNAPSHOT_TIMEOUT}s.")
+
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"Snapshot failed for {device}: {stderr}")
@@ -112,8 +210,24 @@ def _worker_capture_snapshot(device: str) -> bytes:
     if not jpeg_bytes:
         raise RuntimeError(f"Empty snapshot from {device}")
 
-    _snapshot_cache[device] = (time.time(), jpeg_bytes)
     return jpeg_bytes
+
+
+def _get_snapshot(device: str) -> bytes:
+    """Get a snapshot — prefer the persistent serve worker, fall back to one-shot."""
+    # Try the serve worker first
+    if _serve_process is not None and _serve_process.poll() is None:
+        # If the worker is running, wait a bit for the frame to appear
+        # rather than immediately falling back to one-shot (which would
+        # also produce a green frame on YUYV cameras).
+        for _ in range(10):  # up to 5 seconds
+            data = _read_served_snapshot(device)
+            if data:
+                return data
+            time.sleep(0.5)
+
+    # Fall back to one-shot subprocess (serve worker not running or device not served)
+    return _worker_capture_snapshot_oneshot(device)
 
 
 # ── Non-camera helpers ─────────────────────────────────────────────────────
@@ -138,14 +252,27 @@ def _detect_serial_ports() -> list[dict[str, str]]:
 
 
 def _read_current_config() -> dict[str, Any]:
-    """Parse the current config.py and return ROBOT_CONFIG values."""
+    """Parse the current config.py and return camera/port values.
+
+    Supports both formats:
+      - Top-level variables:  CAMERAS = "front:/dev/video4,wrist:/dev/video6"
+      - Dict values:          "cameras": "front:/dev/video4,wrist:/dev/video6"
+    """
     if not CONFIG_PATH.exists():
         return {}
     content = CONFIG_PATH.read_text()
-    m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
+
+    # Try top-level CAMERAS = "..." first, then fall back to dict style
+    m = re.search(r'^CAMERAS\s*=\s*"([^"]*)"', content, re.MULTILINE)
+    if not m:
+        m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
     cameras_str = m.group(1) if m else ""
-    m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
+
+    m2 = re.search(r'^ROBOT_PORT\s*=\s*"([^"]*)"', content, re.MULTILINE)
+    if not m2:
+        m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
     robot_port = m2.group(1) if m2 else ""
+
     camera_map = {}
     if cameras_str:
         for pair in cameras_str.split(","):
@@ -161,24 +288,46 @@ def _read_current_config() -> dict[str, Any]:
 
 
 def _save_config(cameras_str: str, robot_port: str | None = None) -> None:
-    """Update ROBOT_CONFIG in config.py with new camera mapping and optionally robot port."""
+    """Update config.py with new camera mapping and optionally robot port.
+
+    Supports both formats:
+      - Top-level variables:  CAMERAS = "..."  /  ROBOT_PORT = "..."
+      - Dict values:          "cameras": "..."  /  "robot_port": "..."
+    """
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
 
     content = CONFIG_PATH.read_text()
 
-    content = re.sub(
-        r'("cameras"\s*:\s*)"([^"]*)"',
-        f'\\1"{cameras_str}"',
-        content,
-    )
-
-    if robot_port:
+    # Update top-level CAMERAS = "..." if present, else fall back to dict style
+    if re.search(r'^CAMERAS\s*=\s*"', content, re.MULTILINE):
         content = re.sub(
-            r'("robot_port"\s*:\s*)"([^"]*)"',
-            f'\\1"{robot_port}"',
+            r'^(CAMERAS\s*=\s*)"([^"]*)"',
+            f'\\1"{cameras_str}"',
+            content,
+            flags=re.MULTILINE,
+        )
+    else:
+        content = re.sub(
+            r'("cameras"\s*:\s*)"([^"]*)"',
+            f'\\1"{cameras_str}"',
             content,
         )
+
+    if robot_port:
+        if re.search(r'^ROBOT_PORT\s*=\s*"', content, re.MULTILINE):
+            content = re.sub(
+                r'^(ROBOT_PORT\s*=\s*)"([^"]*)"',
+                f'\\1"{robot_port}"',
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content = re.sub(
+                r'("robot_port"\s*:\s*)"([^"]*)"',
+                f'\\1"{robot_port}"',
+                content,
+            )
 
     CONFIG_PATH.write_text(content)
 
@@ -202,20 +351,28 @@ async def detect_cameras():
     """
     Detect all usable video capture devices.
     Camera work runs in a separate subprocess (_camera_worker.py).
+    After detection, starts a persistent worker to keep cameras open.
     """
     loop = asyncio.get_event_loop()
     try:
         cameras = await loop.run_in_executor(None, _worker_detect_cameras)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    # Start persistent serve worker for all detected devices
+    if cameras:
+        detected_devices = [c["device"] for c in cameras]
+        await loop.run_in_executor(None, _start_serve_worker, detected_devices)
+
     return {"cameras": cameras, "count": len(cameras)}
 
 
 @app.get("/api/preflight/snapshot/{device_path:path}")
 async def get_snapshot(device_path: str):
     """
-    Capture a snapshot from a specific video device.
-    Camera work runs in a separate subprocess (_camera_worker.py).
+    Return the latest snapshot from a specific video device.
+    Uses the persistent serve worker (fast, no green frames).
+    Falls back to one-shot subprocess if serve worker is not running.
     """
     device = f"/{device_path}"
     if not os.path.exists(device):
@@ -223,10 +380,9 @@ async def get_snapshot(device_path: str):
 
     loop = asyncio.get_event_loop()
     try:
-        jpeg_bytes = await loop.run_in_executor(None, _worker_capture_snapshot, device)
+        jpeg_bytes = await loop.run_in_executor(None, _get_snapshot, device)
     except RuntimeError as e:
         error_msg = str(e)
-        # 如果是超时错误，返回408状态码
         if "timeout" in error_msg.lower():
             raise HTTPException(status_code=408, detail=error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
@@ -274,9 +430,13 @@ async def save_config(req: SaveConfigRequest):
 async def launch_control():
     """
     Switch from preflight mode to main robot control mode.
-    1. Spawns main_robot:app uvicorn process in background (detached)
-    2. Schedules self-termination of this preflight server after 1.5s
+    1. Stops the persistent camera worker
+    2. Spawns main_robot:app uvicorn process in background (detached)
+    3. Schedules self-termination of this preflight server after 1.5s
     """
+    # Stop the serve worker so cameras are released for main_robot
+    _stop_serve_worker()
+
     backend_dir = Path(__file__).parent
     conda_sh = os.path.expanduser("~/miniconda3/etc/profile.d/conda.sh")
 
@@ -284,7 +444,6 @@ async def launch_control():
     cmd = (
         f"unset CUDA_VISIBLE_DEVICES && "
         f"source {conda_sh} && conda activate lerobot && "
-        f"sleep 2 && "
         f"cd {backend_dir} && "
         f"exec uvicorn main_robot:app --host 0.0.0.0 --port 8000"
     )
@@ -302,7 +461,7 @@ async def launch_control():
     )
 
     async def self_terminate():
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(0.5)
         os.kill(os.getpid(), signal.SIGTERM)
 
     asyncio.create_task(self_terminate())
