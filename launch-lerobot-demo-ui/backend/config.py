@@ -36,42 +36,43 @@ WAYPOINTS_JSON = os.path.join(LEROBOT_DIR, "saved_positions.json")
 # ── Points CSV — joint positions for 16-grid prepositions (ROS2 radians) ──
 POINTS_CSV = os.path.join(LEROBOT_DIR, "point.csv")
 
+# ── Points CSV — joint positions for 16-grid prepositions (ROS2 radians) ──
+# (kept for GOTO point mover only, not used for waypoints anymore)
+
+# ── JSON waypoint files (LeRobot normalized, from save_position.py) ──
+LEMON_JSON = os.path.join(LEROBOT_DIR, "lemon.json")
+TISSUE_JSON = os.path.join(LEROBOT_DIR, "tissue.json")
+CUP_JSON = os.path.join(LEROBOT_DIR, "cup.json")
+CLOTH_JSON = os.path.join(LEROBOT_DIR, "cloth.json")
+
 # ════════════════════════════════════════════════════════════════════════
 #  PIPELINE STAGES — Each stage: run a model, trigger → waypoints → next
 #
 #  To add a new object/model, just append another dict to this list.
 #  Fields:
-#    name          — human-readable stage name
-#    model         — HuggingFace model ID
-#    trigger_joint — joint name to monitor (without ".pos" suffix)
-#    trigger_op    — "lt" (less than) or "gt" (greater than)
-#    trigger_value — threshold value (LeRobot normalized)
-#    waypoints     — list of waypoint names from saved_positions.json
-#                    (or "all" to use all waypoints in order)
-#    waypoint_duration — seconds per waypoint movement (slower = safer)
-#    episode_time  — max seconds per episode
-#    num_episodes  — number of episodes to run
+#    name              — human-readable stage name
+#    model             — HuggingFace model ID
+#    trigger_joint     — joint name to monitor (without ".pos" suffix)
+#    trigger_op        — "lt" (less than) or "gt" (greater than)
+#    trigger_value     — threshold value (LeRobot normalized)
+#    waypoints         — "all" / "none" / list of names (from saved_positions.json)
+#    waypoint_json     — JSON file path (from save_position.py, LeRobot normalized)
+#                        If set, overrides "waypoints" field
+#    waypoint_duration — seconds per waypoint movement (default for all steps)
+#    waypoint_timings  — (optional) per-step [(move_time, hold_time), ...]
+#                        Overrides waypoint_duration for each step
+#    episode_time      — max seconds per episode
+#    num_episodes      — number of episodes to run
 # ════════════════════════════════════════════════════════════════════════
 
 PIPELINE_STAGES = [
     {
-        "name": "Cup",
-        "model": "FrankYuzhe/act_cup_box_0301_merged_80",
-        "trigger_joint": "shoulder_pan",
-        "trigger_op": "lt",        # less than
-        "trigger_value": -25.0,
-        "waypoints": "all",        # use all waypoints from saved_positions.json
-        "waypoint_duration": 0.8,  # 0.8 seconds per waypoint (fast transition)
-        "episode_time": 200,
-        "num_episodes": 10,
-    },
-    {
         "name": "Lemon",
-        "model": "FrankYuzhe/act_lemon_box_0226_merged_160_ckpt_040000",
+        "model": "FrankYuzhe/lemon_box_0226_merged_200_0227_141701",
         "trigger_joint": "shoulder_pan",
         "trigger_op": "lt",
         "trigger_value": -25.0,
-        "waypoints": "all",
+        "waypoint_json": LEMON_JSON,
         "waypoint_duration": 0.8,
         "episode_time": 200,
         "num_episodes": 10,
@@ -82,8 +83,34 @@ PIPELINE_STAGES = [
         "trigger_joint": "shoulder_pan",
         "trigger_op": "lt",
         "trigger_value": -25.0,
-        "waypoints": "all",
+        "waypoint_json": TISSUE_JSON,
         "waypoint_duration": 0.8,
+        "episode_time": 200,
+        "num_episodes": 10,
+    },
+    {
+        "name": "Cup",
+        "model": "FrankYuzhe/act_cup_box_0301_merged_80",
+        "trigger_joint": "shoulder_pan",
+        "trigger_op": "lt",
+        "trigger_value": -25.0,
+        "waypoint_json": CUP_JSON,
+        "waypoint_duration": 0.8,
+        "episode_time": 200,
+        "num_episodes": 10,
+    },
+    {
+        "name": "Cloth",
+        "model": "FrankYuzhe/act_cloth_0301_merged_80_0301_200931",
+        "trigger_joint": "shoulder_pan",
+        "trigger_op": "gt",            # greater than -25 → 接管
+        "trigger_value": -10.0,
+        "waypoint_csv": os.path.join(LEROBOT_DIR, "cloth.csv"),
+        "waypoint_duration": 0.8,
+        "waypoint_timings": [
+            (0.3, 0.0), (0.8, 0.0), (0.3, 0.0), (0.8, 0.0), (0.3, 0.0),
+            (0.8, 0.0), (0.5, 0.0), (0.5, 0.0), (0.4, 0.5), (0.4, 0.5),
+        ],
         "episode_time": 200,
         "num_episodes": 10,
     },

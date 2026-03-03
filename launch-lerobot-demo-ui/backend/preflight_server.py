@@ -201,7 +201,7 @@ def _worker_capture_snapshot_oneshot(device: str) -> bytes:
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Snapshot timeout for {device} after {SNAPSHOT_TIMEOUT}s.")
-
+    
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"Snapshot failed for {device}: {stderr}")
@@ -265,12 +265,12 @@ def _read_current_config() -> dict[str, Any]:
     # Try top-level CAMERAS = "..." first, then fall back to dict style
     m = re.search(r'^CAMERAS\s*=\s*"([^"]*)"', content, re.MULTILINE)
     if not m:
-        m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
+    m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
     cameras_str = m.group(1) if m else ""
 
     m2 = re.search(r'^ROBOT_PORT\s*=\s*"([^"]*)"', content, re.MULTILINE)
     if not m2:
-        m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
+    m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
     robot_port = m2.group(1) if m2 else ""
 
     camera_map = {}
@@ -308,11 +308,11 @@ def _save_config(cameras_str: str, robot_port: str | None = None) -> None:
             flags=re.MULTILINE,
         )
     else:
-        content = re.sub(
-            r'("cameras"\s*:\s*)"([^"]*)"',
-            f'\\1"{cameras_str}"',
-            content,
-        )
+    content = re.sub(
+        r'("cameras"\s*:\s*)"([^"]*)"',
+        f'\\1"{cameras_str}"',
+        content,
+    )
 
     if robot_port:
         if re.search(r'^ROBOT_PORT\s*=\s*"', content, re.MULTILINE):
@@ -323,11 +323,11 @@ def _save_config(cameras_str: str, robot_port: str | None = None) -> None:
                 flags=re.MULTILINE,
             )
         else:
-            content = re.sub(
-                r'("robot_port"\s*:\s*)"([^"]*)"',
-                f'\\1"{robot_port}"',
-                content,
-            )
+        content = re.sub(
+            r'("robot_port"\s*:\s*)"([^"]*)"',
+            f'\\1"{robot_port}"',
+            content,
+        )
 
     CONFIG_PATH.write_text(content)
 

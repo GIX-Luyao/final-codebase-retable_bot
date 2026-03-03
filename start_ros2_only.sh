@@ -17,7 +17,7 @@ echo "  仅启动 ROS2 基础组件"
 echo "=========================================="
 
 # Check if serial port exists
-SERIAL_PORT="/dev/ttyACM1"
+SERIAL_PORT="/dev/ttyACM0"
 if [ ! -e "$SERIAL_PORT" ]; then
     echo "⚠️  Warning: Serial port $SERIAL_PORT not found!"
     echo "   请检查机械臂是否已连接"

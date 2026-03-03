@@ -221,6 +221,11 @@ def parse_output(line: str) -> dict:
         return {"_signal": "INFERENCE_DONE"}
     if "pipeline_restart" in lo:
         return {"_signal": "PIPELINE_RESTART"}
+    # PIPELINE_RETRY:StageName
+    m = re.match(r"PIPELINE_RETRY:(.+)", raw) if raw.startswith("PIPELINE_RETRY:") else None
+    if m:
+        name = m.group(1)
+        return {"_signal": "PIPELINE_RETRY", "_pipeline_stage": name}
     if "pipeline_complete" in lo:
         return {"_signal": "PIPELINE_COMPLETE"}
 
@@ -435,6 +440,17 @@ async def spawn_warmup_process():
                 robot.log_event("PIPELINE_RESTART")
                 await broadcast_state()
                 continue
+            if sig == "PIPELINE_RETRY":
+                stage_name = updates.pop("_pipeline_stage", robot.pipeline_stage)
+                robot.state = "WORKING"
+                robot.step = f"Retrying {stage_name}"
+                robot.progress = 0
+                robot.message = f"Retrying stage [{stage_name}]..."
+                robot.pipeline_stage = stage_name
+                robot.pipeline_status = "loading"
+                robot.log_event("PIPELINE_RETRY", {"stage": stage_name})
+                await broadcast_state()
+                continue
             if sig == "PIPELINE_COMPLETE":
                 robot.state = "DONE"
                 robot.step = "Pipeline Complete"
@@ -597,6 +613,39 @@ async def api_resume():
     robot.log_event("CMD_RESUME")
     await broadcast_state()
     return {"status": "ok", "message": "Resume sent"}
+
+
+@app.post("/api/restart")
+async def api_restart():
+    """Restart pipeline from stage 1: go home → reload first model → start."""
+    if robot.process is None:
+        return {"status": "error", "message": "Not running"}
+    send_control_command("RESTART")
+    robot.state = "WORKING"
+    robot.step = "Restarting"
+    robot.progress = 0
+    robot.message = "Restarting pipeline from stage 1..."
+    robot.pipeline_stage_idx = 0
+    robot.pipeline_status = "loading"
+    robot.log_event("CMD_RESTART")
+    await broadcast_state()
+    return {"status": "ok", "message": "Restart sent — going home and restarting from stage 1"}
+
+
+@app.post("/api/retry")
+async def api_retry():
+    """Retry current stage: go home → reload current model → start."""
+    if robot.process is None:
+        return {"status": "error", "message": "Not running"}
+    send_control_command("RETRY")
+    robot.state = "WORKING"
+    robot.step = "Retrying"
+    robot.progress = 0
+    robot.message = f"Retrying stage [{robot.pipeline_stage}]..."
+    robot.pipeline_status = "loading"
+    robot.log_event("CMD_RETRY", {"stage": robot.pipeline_stage})
+    await broadcast_state()
+    return {"status": "ok", "message": f"Retry sent — going home and retrying {robot.pipeline_stage}"}
 
 
 @app.post("/api/quit")
@@ -800,6 +849,8 @@ async def startup():
     print("  POST /api/stop           → Emergency stop")
     print("  POST /api/reset          → Go to home")
     print("  POST /api/resume         → Resume inference")
+    print("  POST /api/restart        → Restart from stage 1")
+    print("  POST /api/retry          → Retry current stage")
     print("  POST /api/quit           → Quit & re-warm")
     print("  POST /api/hand-detect    → Toggle hand safety")
     print("  GET  /api/frame-grid/:c  → 16-grid camera frame")

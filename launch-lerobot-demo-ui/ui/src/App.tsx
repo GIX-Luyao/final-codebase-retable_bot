@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type FC } from 'react'
+// @ts-ignore
 import PreflightCheck from './PreflightCheck'
 
 /* ================================================================
@@ -164,9 +165,44 @@ const CameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnable
 }
 
 /* ================================================================
+   Sidebar Camera Feeds (large, stacked vertically for right column)
+   ================================================================ */
+
+const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
+  const [cameras, setCameras] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/cameras')
+      .then(r => r.json())
+      .then(d => setCameras(d.cameras || []))
+      .catch(() => {})
+  }, [])
+
+  if (cameras.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-4 w-full">
+      <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
+        📷 Live Camera Feeds
+      </h3>
+      {cameras.map(name => (
+        <CameraFeed
+          key={name}
+          name={name}
+          active={active}
+          handDetected={handDetected}
+          isHandCamera={handDetectEnabled && name === 'front'}
+        />
+      ))}
+    </div>
+  )
+}
+
+/* ================================================================
    Grid Camera Feed (16-grid overlay)
    ================================================================ */
 
+// @ts-ignore
 const GridCameraFeed: FC<{ active: boolean }> = ({ active }) => {
   const imgRef = useRef<HTMLImageElement>(null)
   const [hasFrame, setHasFrame] = useState(false)
@@ -226,6 +262,7 @@ const GridCameraFeed: FC<{ active: boolean }> = ({ active }) => {
    Point Mover (move arm to preposition 1-16)
    ================================================================ */
 
+// @ts-ignore
 const PointMover: FC<{ enabled: boolean; toast: (msg: string, type: 'success' | 'error' | 'info') => void }> = ({ enabled, toast: showToast }) => {
   const [pointNum, setPointNum] = useState('')
   const [moving, setMoving] = useState(false)
@@ -393,11 +430,13 @@ function App() {
     [toast],
   )
 
-  const doStart  = useCallback(() => api('/api/start',  'Inference started'),  [api])
-  const doStop   = useCallback(() => api('/api/stop',   'Emergency stop'),     [api])
-  const doHome   = useCallback(() => api('/api/reset',  'Going to home'),      [api])
-  const doResume = useCallback(() => api('/api/resume', 'Resumed'),            [api])
-  const doQuit   = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
+  const doStart   = useCallback(() => api('/api/start',   'Inference started'),  [api])
+  const doStop    = useCallback(() => api('/api/stop',   'Emergency stop'),     [api])
+  const doHome    = useCallback(() => api('/api/reset',  'Going to home'),      [api])
+  const doResume  = useCallback(() => api('/api/resume', 'Resumed'),            [api])
+  const doRestart = useCallback(() => api('/api/restart','Restarting from stage 1'), [api])
+  const doRetry   = useCallback(() => api('/api/retry',  'Retrying current stage'),  [api])
+  const doQuit    = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety OFF' : 'Hand safety ON'), [api, handDetect])
 
   const submitFeedback = useCallback(async () => {
@@ -458,6 +497,7 @@ function App() {
   const isRunning  = state === 'WORKING'
   const isPaused   = state === 'PAUSED' || state === 'HOMED'
   const hasProcess = isRunning || isPaused
+  // @ts-ignore
   const canMoveToPoint = state === 'READY' || state === 'HOMED' || state === 'DONE' || state === 'PAUSED' || state === 'WORKING'
 
   /* ================================================================
@@ -467,7 +507,7 @@ function App() {
     <div className="w-full min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
 
       {/* ── Header ── */}
-      <header className="w-full px-6 md:px-10 py-5 flex items-center justify-between border-b border-gray-800/60">
+      <header className="w-full px-4 md:px-6 py-3 flex items-center justify-between border-b border-gray-800/60">
         <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-100">🤖 LeRobot Control</h1>
         <div className="flex items-center gap-3">
           <span className={`h-3 w-3 md:h-4 md:w-4 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
@@ -478,33 +518,33 @@ function App() {
       </header>
 
       {/* ── Main — two-column on large screens ── */}
-      <main className="flex-1 flex flex-col lg:flex-row w-full px-6 md:px-10 py-6 md:py-10 gap-6 lg:gap-8">
+      <main className="flex-1 flex flex-col lg:flex-row w-full px-4 md:px-6 py-4 md:py-6 gap-4 lg:gap-5">
 
         {/* ════════════ Left Column: Main Controls ════════════ */}
         <div className="flex-1 flex flex-col items-center min-w-0">
 
         {/* ─── State Orb ─── */}
-        <div className="flex flex-col items-center mb-6 md:mb-10">
-          <div className={`relative w-40 h-40 md:w-52 md:h-52 lg:w-60 lg:h-60 rounded-full flex items-center justify-center
-                          ring-[5px] md:ring-[6px] ${meta.ring} ${meta.bg} shadow-2xl ${meta.glow}
+        <div className="flex flex-col items-center mb-4 md:mb-6">
+          <div className={`relative w-28 h-28 md:w-36 md:h-36 lg:w-40 lg:h-40 rounded-full flex items-center justify-center
+                          ring-4 md:ring-[5px] ${meta.ring} ${meta.bg} shadow-2xl ${meta.glow}
                           transition-all duration-500
                           ${isRunning || isWarmup ? 'animate-pulse' : ''}`}>
             {/* spinning ring for WORKING or WARMUP */}
             {(isRunning || isWarmup) && (
-              <div className={`absolute inset-[-8px] md:inset-[-10px] rounded-full border-[3px] md:border-4 border-transparent animate-spin
+              <div className={`absolute inset-[-6px] md:inset-[-8px] rounded-full border-[3px] border-transparent animate-spin
                 ${isWarmup ? 'border-t-cyan-400' : 'border-t-blue-400'}`} />
             )}
-            <span className="text-6xl md:text-7xl lg:text-8xl">{meta.icon}</span>
+            <span className="text-5xl md:text-6xl lg:text-7xl">{meta.icon}</span>
         </div>
-          <p className={`mt-4 md:mt-6 text-2xl md:text-3xl lg:text-4xl font-extrabold tracking-wide ${meta.text}`}>
+          <p className={`mt-3 md:mt-4 text-xl md:text-2xl lg:text-3xl font-extrabold tracking-wide ${meta.text}`}>
             {autoStopped && isPaused ? '🖐️ Hand Stop' : meta.label}
           </p>
         </div>
 
         {/* ─── Pipeline Stage Indicator ─── */}
         {pipelineTotal > 0 && (
-          <div className="w-full max-w-2xl mb-4 md:mb-6">
-            <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-4 md:p-5">
+          <div className="w-full mb-3 md:mb-4">
+            <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-3 md:p-4">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs md:text-sm uppercase tracking-wider text-gray-500 font-medium">Pipeline</span>
                 {pipelineStage && (
@@ -549,7 +589,7 @@ function App() {
         )}
 
         {/* ─── Status Info Card ─── */}
-        <div className="w-full max-w-2xl bg-gray-800/60 backdrop-blur rounded-2xl md:rounded-3xl p-6 md:p-8 space-y-4 mb-6 md:mb-10">
+        <div className="w-full bg-gray-800/60 backdrop-blur rounded-2xl p-4 md:p-5 space-y-3 mb-4 md:mb-6">
           {step && (
             <div className="flex items-center justify-between">
               <span className="text-sm md:text-base uppercase tracking-wider text-gray-500 font-medium">Step</span>
@@ -580,7 +620,7 @@ function App() {
         </div>
 
         {/* ─── Hand Safety Bar ─── */}
-        <div className="w-full max-w-2xl mb-4 md:mb-6">
+        <div className="w-full mb-3 md:mb-4">
           <div className={`flex items-center justify-between rounded-2xl px-5 py-4 md:px-6 md:py-5 transition-all duration-300
                           ${handDetected
                             ? 'bg-red-600/20 ring-2 ring-red-500/60'
@@ -630,11 +670,13 @@ function App() {
           </div>
         </div>
 
-        {/* ─── Camera Feeds ─── */}
+        {/* ─── Camera Feeds (shown inline on small screens only, right column on lg+) ─── */}
+        <div className="lg:hidden">
         <CameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
+        </div>
 
         {/* ─── Action Buttons ─── */}
-        <div className="w-full max-w-2xl space-y-4 md:space-y-5">
+        <div className="w-full space-y-3 md:space-y-4">
 
           {/* Warmup indicator */}
           {isWarmup && (
@@ -683,6 +725,28 @@ function App() {
             </button>
           )}
 
+          {/* Restart + Retry (visible when paused/homed) */}
+          {isPaused && (
+            <div className="flex gap-4">
+              <button
+                onClick={doRestart}
+                className="flex-1 py-4 md:py-5 rounded-2xl text-base md:text-lg font-bold
+                           bg-orange-600/80 hover:bg-orange-500 active:bg-orange-700
+                           transition-colors duration-150"
+              >
+                🔄&ensp;Restart
+              </button>
+              <button
+                onClick={doRetry}
+                className="flex-1 py-4 md:py-5 rounded-2xl text-base md:text-lg font-bold
+                           bg-cyan-600/80 hover:bg-cyan-500 active:bg-cyan-700
+                           transition-colors duration-150"
+              >
+                🔁&ensp;Retry
+              </button>
+            </div>
+          )}
+
           {/* Secondary: Home + Quit */}
           {hasProcess && (
             <div className="flex gap-4">
@@ -710,7 +774,7 @@ function App() {
         <div className="flex-1 min-h-6 md:min-h-10" />
 
         {/* ─── EMERGENCY STOP ─── */}
-        <div className="w-full max-w-2xl">
+        <div className="w-full">
           <button
             onClick={hasProcess ? doStop : undefined}
             disabled={!hasProcess}
@@ -726,6 +790,11 @@ function App() {
         </div>
 
         </div>{/* end left column */}
+
+        {/* ════════════ Right Column: Live Camera Feeds ════════════ */}
+        <div className="hidden lg:flex lg:w-[360px] xl:w-[400px] 2xl:w-[440px] flex-shrink-0 min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+          <SidebarCameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
+        </div>
 
       </main>
 

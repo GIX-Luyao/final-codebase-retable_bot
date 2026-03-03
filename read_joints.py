@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-CSV_FILE = "point.csv"
+CSV_FILE = "item.csv"
 
 
 class JointReader(Node):

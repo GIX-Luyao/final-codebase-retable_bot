@@ -75,6 +75,15 @@ stop_all() {
         echo "$cam_workers" | xargs kill -9 2>/dev/null || true
     fi
 
+    # Kill ROS2 processes that may be holding /dev/ttyACM0
+    local ros2_procs
+    ros2_procs=$(pgrep -f "ros2_control_node|start_ros2_only|robot_state_publisher|arm_controller" 2>/dev/null || true)
+    if [ -n "$ros2_procs" ]; then
+        warn "Killing ROS2 processes holding serial port (PIDs: $ros2_procs)"
+        echo "$ros2_procs" | xargs kill -9 2>/dev/null || true
+        sleep 1
+    fi
+
     ok "All processes stopped."
 }
 

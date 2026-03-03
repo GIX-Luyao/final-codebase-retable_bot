@@ -220,6 +220,14 @@ def check_control_file(control_file, events, hand_detector=None):
             events["_goto_point_idx"] = point_idx
         except (ValueError, IndexError):
             logger.error(f"Invalid GOTO command: {cmd}")
+    elif cmd == "RESTART":
+        events["emergency_stop"] = True
+        events["exit_early"] = True
+        events["_restart"] = True
+    elif cmd == "RETRY":
+        events["emergency_stop"] = True
+        events["exit_early"] = True
+        events["_retry"] = True
     elif cmd == "QUIT":
         events["stop_recording"] = True
         events["exit_early"] = True
@@ -394,6 +402,12 @@ def wait_for_command(control_file, events, target_cmd="START",
             return target_cmd
         if cmd == "QUIT":
             return "QUIT"
+        if cmd == "RESTART":
+            # Restart handled by main loop, treat as HOME for wait_for_command
+            return target_cmd
+        if cmd == "RETRY":
+            # Retry handled by main loop, treat as HOME for wait_for_command
+            return target_cmd
         if cmd == "HAND_ON" and hand_detector:
             hand_detector.enabled = True
             print("HAND_DETECT_ON", flush=True)
@@ -440,12 +454,13 @@ def handle_estop_loop(robot, events, args, hand_detector, frame_dir, camera_name
     """Hold position during emergency stop.
 
     Returns:
-        "restart" if HOME was used (pipeline should restart from stage 1)
+        "restart" if RESTART command was received (pipeline should restart from stage 1)
+        "retry"   if RETRY command was received (go home + retry current stage)
         "continue" otherwise (resume current stage)
     """
     hold_pos = robot.bus.sync_read("Present_Position")
     robot.bus.sync_write("Goal_Position", hold_pos)
-    _went_home = False  # track if HOME was used
+    _action = "continue"  # track what action to take
 
     if events.get("auto_stopped"):
         print("🖐️  AUTO E-STOP — holding position. Remove hand to auto-resume...", flush=True)
@@ -455,6 +470,30 @@ def handle_estop_loop(robot, events, args, hand_detector, frame_dir, camera_name
     _last_ft = 0.0
     while events.get("emergency_stop"):
         check_control_file(args.control_file, events, hand_detector)
+
+        # ── RESTART command: go home → restart pipeline from stage 1 ──
+        if events.get("_restart"):
+            events["_restart"] = False
+            events["emergency_stop"] = False
+            events["auto_stopped"] = False
+            print("GOTO_STARTED:HOME", flush=True)
+            go_to_rest_position(robot, rest_position=robot.rest_position,
+                                fps=args.fps, duration_s=2.0, events=events)
+            print("GOTO_DONE:HOME", flush=True)
+            _action = "restart"
+            break
+
+        # ── RETRY command: go home → retry current stage ──
+        if events.get("_retry"):
+            events["_retry"] = False
+            events["emergency_stop"] = False
+            events["auto_stopped"] = False
+            print("GOTO_STARTED:HOME", flush=True)
+            go_to_rest_position(robot, rest_position=robot.rest_position,
+                                fps=args.fps, duration_s=2.0, events=events)
+            print("GOTO_DONE:HOME", flush=True)
+            _action = "retry"
+            break
 
         # Auto-resume from hand detection
         if (hand_detector and events.get("auto_stopped")
@@ -472,7 +511,6 @@ def handle_estop_loop(robot, events, args, hand_detector, frame_dir, camera_name
             else:
                 target_pos = robot.rest_position
                 goto_idx = None
-                _went_home = True
                 print("GOTO_STARTED:HOME", flush=True)
             events["go_to_rest"] = False
             events["emergency_stop"] = False
@@ -497,7 +535,7 @@ def handle_estop_loop(robot, events, args, hand_detector, frame_dir, camera_name
         if events.get("stop_recording"):
             break
 
-    return "restart" if _went_home else "continue"
+    return _action
 
 
 def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_names,
@@ -505,10 +543,11 @@ def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_
     """Handle go-to-rest/home/goto-point, then hold until resumed.
 
     Returns:
-        "restart" if HOME was used (pipeline should restart from stage 1)
+        "restart" if RESTART command was received (pipeline should restart from stage 1)
+        "retry"   if RETRY command was received (go home + retry current stage)
         "continue" otherwise (resume current stage)
     """
-    _went_home = False
+    _action = "continue"
     goto_idx = events.pop("_goto_point_idx", None)
     if goto_idx is not None and goto_points and 1 <= goto_idx <= len(goto_points):
         target_pos = _radians_to_lerobot(goto_points[goto_idx - 1], goto_joint_names, robot)
@@ -518,7 +557,6 @@ def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_
         target_pos = robot.rest_position
         label = "🏠 rest"
         goto_idx = None
-        _went_home = True
         print("GOTO_STARTED:HOME", flush=True)
 
     events["go_to_rest"] = False
@@ -538,6 +576,29 @@ def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_
     _last_ft = 0.0
     while events.get("emergency_stop"):
         check_control_file(args.control_file, events, hand_detector)
+
+        # ── RESTART command: go home → restart pipeline from stage 1 ──
+        if events.get("_restart"):
+            events["_restart"] = False
+            events["emergency_stop"] = False
+            print("GOTO_STARTED:HOME", flush=True)
+            go_to_rest_position(robot, rest_position=robot.rest_position,
+                                fps=args.fps, duration_s=2.0, events=events)
+            print("GOTO_DONE:HOME", flush=True)
+            _action = "restart"
+            break
+
+        # ── RETRY command: go home → retry current stage ──
+        if events.get("_retry"):
+            events["_retry"] = False
+            events["emergency_stop"] = False
+            print("GOTO_STARTED:HOME", flush=True)
+            go_to_rest_position(robot, rest_position=robot.rest_position,
+                                fps=args.fps, duration_s=2.0, events=events)
+            print("GOTO_DONE:HOME", flush=True)
+            _action = "retry"
+            break
+
         if events.get("go_to_rest"):
             _gi = events.pop("_goto_point_idx", None)
             if _gi is not None and goto_points and 1 <= _gi <= len(goto_points):
@@ -546,7 +607,6 @@ def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_
             else:
                 _tp = robot.rest_position
                 _gi = None
-                _went_home = True
             events["go_to_rest"] = False
             events["exit_early"] = False
             events["emergency_stop"] = False
@@ -568,7 +628,7 @@ def handle_goto_rest_loop(robot, events, args, hand_detector, frame_dir, camera_
         if events.get("stop_recording"):
             break
 
-    return "restart" if _went_home else "continue"
+    return _action
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -632,8 +692,11 @@ def run_stage_inference(stage, model, preprocess, postprocess, robot, ds_feature
                 estop_result = handle_estop_loop(robot, events, args, hand_detector,
                                   frame_dir, camera_names, goto_points, goto_joint_names)
                 if estop_result == "restart":
-                    print("🔄  HOME used — restarting pipeline from stage 1...", flush=True)
+                    print("🔄  Restarting pipeline from stage 1...", flush=True)
                     return "restart"
+                if estop_result == "retry":
+                    print("🔄  Retrying current stage...", flush=True)
+                    return "retry"
                 print("▶️  Resumed. Continuing inference...", flush=True)
                 continue
 
@@ -644,8 +707,11 @@ def run_stage_inference(stage, model, preprocess, postprocess, robot, ds_feature
                 rest_result = handle_goto_rest_loop(robot, events, args, hand_detector,
                                       frame_dir, camera_names, goto_points, goto_joint_names)
                 if rest_result == "restart":
-                    print("🔄  HOME used — restarting pipeline from stage 1...", flush=True)
+                    print("🔄  Restarting pipeline from stage 1...", flush=True)
                     return "restart"
+                if rest_result == "retry":
+                    print("🔄  Retrying current stage...", flush=True)
+                    return "retry"
                 print("▶️  Resumed from position. Continuing inference...", flush=True)
                 continue
 
@@ -698,18 +764,48 @@ def run_stage_inference(stage, model, preprocess, postprocess, robot, ds_feature
 #  Move through waypoints
 # ═══════════════════════════════════════════════════════════════════════
 
+def load_csv_waypoints(csv_path, robot):
+    """Load waypoints from a CSV file (ROS2 radians) and convert to lerobot format.
+
+    Args:
+        csv_path: Path to CSV file with header row and ROS2 radian values.
+        robot: Connected robot instance (needed for calibration conversion).
+
+    Returns:
+        List of dicts: [{"shoulder_pan.pos": val, ..., "_name": "csv_1"}, ...]
+    """
+    if not csv_path or not os.path.exists(csv_path):
+        logger.warning(f"CSV waypoint file not found: {csv_path}")
+        return []
+
+    points, csv_names = _load_goto_points(csv_path)
+    if not points:
+        return []
+
+    waypoints = []
+    for i, pt in enumerate(points):
+        wp = _radians_to_lerobot(pt, csv_names, robot)
+        wp["_name"] = f"csv_{i+1}"
+        waypoints.append(wp)
+
+    logger.info(f"Loaded {len(waypoints)} CSV waypoints from {csv_path}")
+    return waypoints
+
+
 def move_through_waypoints(robot, waypoints, duration_per_wp, fps, events,
-                           frame_dir="", camera_names=None):
+                           frame_dir="", camera_names=None, timings=None):
     """Smoothly move the robot through a sequence of waypoints.
 
     Args:
         robot: Connected robot instance.
         waypoints: List of position dicts [{"shoulder_pan.pos": val, ...}, ...].
-        duration_per_wp: Seconds to spend moving to each waypoint.
+        duration_per_wp: Default seconds to spend moving to each waypoint.
         fps: Control loop frequency.
         events: Event dict for emergency stop.
         frame_dir: Frame directory for camera streaming.
         camera_names: List of camera names.
+        timings: Optional per-step list of (move_time, hold_time) tuples.
+                 Overrides duration_per_wp for each step.
     """
     if not waypoints:
         logger.warning("No waypoints to move through.")
@@ -717,12 +813,20 @@ def move_through_waypoints(robot, waypoints, duration_per_wp, fps, events,
 
     for i, wp in enumerate(waypoints):
         name = wp.pop("_name", f"p{i+1}")
+
+        # Per-step timing or default
+        if timings and i < len(timings):
+            move_t, hold_t = timings[i]
+        else:
+            move_t, hold_t = duration_per_wp, 0.1
+
         print(f"WAYPOINT_STARTED:{i+1}:{name}", flush=True)
-        logger.info(f"Moving to waypoint {i+1}/{len(waypoints)}: {name}")
+        logger.info(f"Moving to waypoint {i+1}/{len(waypoints)}: {name} "
+                     f"(move={move_t:.2f}s, hold={hold_t:.2f}s)")
 
         go_to_rest_position(
             robot, rest_position=wp,
-            fps=fps, duration_s=duration_per_wp, events=events,
+            fps=fps, duration_s=move_t, events=events,
         )
 
         if events.get("emergency_stop") or events.get("stop_recording"):
@@ -732,8 +836,9 @@ def move_through_waypoints(robot, waypoints, duration_per_wp, fps, events,
         print(f"WAYPOINT_DONE:{i+1}:{name}", flush=True)
         logger.info(f"Reached waypoint {name}")
 
-        # Brief pause at each waypoint for stability
-        time.sleep(0.1)
+        # Hold at waypoint
+        if hold_t > 0:
+            time.sleep(hold_t)
 
         # Save camera frames while at waypoint
         if frame_dir and camera_names:
@@ -869,8 +974,9 @@ def main():
         # ═══════════════════════════════════════════════════════════
         #  Main pipeline loop
         # ═══════════════════════════════════════════════════════════
+        _skip_wait = False  # Set True after pipeline restart to skip wait_for_start
         while True:
-            if args.wait_for_start:
+            if args.wait_for_start and not _skip_wait:
                 print("READY_FOR_START", flush=True)
                 logger.info("Waiting for START command...")
                 cmd = wait_for_command(args.control_file, events, "START",
@@ -881,6 +987,7 @@ def main():
                                        goto_joint_names=goto_joint_names)
                 if cmd == "QUIT":
                     break
+            _skip_wait = False  # Reset for next iteration
 
             print("INFERENCE_STARTED", flush=True)
             events["stop_recording"] = False
@@ -888,16 +995,21 @@ def main():
             events["emergency_stop"] = False
             events["go_to_rest"] = False
             events["auto_stopped"] = False
+            events["_restart"] = False
+            events["_retry"] = False
 
             quit_requested = False
             restart_requested = False
+            retry_requested = False
 
-            for stage_idx, stage in enumerate(pipeline_stages):
+            stage_idx = 0
+            while stage_idx < len(pipeline_stages):
+                stage = pipeline_stages[stage_idx]
                 stage_name = stage["name"]
                 stage_model_id = stage["model"]
 
-                # ── Load model for this stage (skip if already loaded for first stage) ──
-                if stage_idx > 0:
+                # ── Load model for this stage (skip if already loaded for first stage on first run) ──
+                if stage_idx > 0 or retry_requested:
                     print(f"STAGE_LOADING:{stage_name}", flush=True)
                     logger.info(f"Loading model for stage [{stage_name}]: {stage_model_id}")
                     model = ACTPolicy.from_pretrained(stage_model_id)
@@ -907,6 +1019,7 @@ def main():
                     )
                     print(f"STAGE_LOADED:{stage_name}", flush=True)
                     logger.info(f"Model loaded for [{stage_name}]")
+                    retry_requested = False
 
                 print(f"STAGE_STARTED:{stage_name}", flush=True)
                 logger.info(f"═══ Starting stage [{stage_name}] ═══")
@@ -925,27 +1038,55 @@ def main():
                 if result == "restart":
                     restart_requested = True
                     print("PIPELINE_RESTART", flush=True)
-                    logger.info("═══ Pipeline restart requested (HOME) ═══")
+                    logger.info("═══ Pipeline restart requested ═══")
                     break
+
+                if result == "retry":
+                    retry_requested = True
+                    print(f"PIPELINE_RETRY:{stage_name}", flush=True)
+                    logger.info(f"═══ Retry requested for stage [{stage_name}] ═══")
+                    # Don't increment stage_idx — re-run the same stage
+                    events["stop_recording"] = False
+                    events["exit_early"] = False
+                    events["emergency_stop"] = False
+                    events["go_to_rest"] = False
+                    events["auto_stopped"] = False
+                    events["_restart"] = False
+                    events["_retry"] = False
+                    continue
 
                 if result == "triggered":
                     print(f"STAGE_COMPLETE:{stage_name}:triggered", flush=True)
                     logger.info(f"Stage [{stage_name}] triggered → moving through waypoints")
 
-                    # ── Move through waypoints ──
-                    wp_names = stage.get("waypoints", "all")
-                    if wp_names == "all":
-                        stage_waypoints = load_waypoints(waypoints_json)
+                    # ── Load waypoints (CSV → per-stage JSON → global JSON) ──
+                    wp_csv = stage.get("waypoint_csv", "")
+                    wp_json = stage.get("waypoint_json", "")
+                    if wp_csv:
+                        # CSV waypoints (ROS2 radians → lerobot normalized)
+                        stage_waypoints = load_csv_waypoints(wp_csv, robot)
+                    elif wp_json:
+                        # Per-stage JSON waypoints (LeRobot normalized, from save_position.py)
+                        stage_waypoints = load_waypoints(wp_json)
                     else:
-                        stage_waypoints = load_waypoints(waypoints_json, names=wp_names)
+                        # Global JSON waypoints (saved_positions.json)
+                        wp_names = stage.get("waypoints", "all")
+                        if wp_names == "all":
+                            stage_waypoints = load_waypoints(waypoints_json)
+                        elif wp_names == "none":
+                            stage_waypoints = []
+                        else:
+                            stage_waypoints = load_waypoints(waypoints_json, names=wp_names)
 
                     wp_duration = stage.get("waypoint_duration", 3.0)
+                    wp_timings = stage.get("waypoint_timings", None)
 
                     if stage_waypoints:
                         print(f"WAYPOINTS_STARTED:{len(stage_waypoints)}", flush=True)
                         move_through_waypoints(
                             robot, stage_waypoints, wp_duration, args.fps, events,
                             frame_dir=args.frame_dir, camera_names=camera_names,
+                            timings=wp_timings,
                         )
                         print(f"WAYPOINTS_DONE:{len(stage_waypoints)}", flush=True)
 
@@ -957,16 +1098,27 @@ def main():
                     print(f"STAGE_COMPLETE:{stage_name}:done", flush=True)
                     logger.info(f"Stage [{stage_name}] completed all episodes")
 
+                stage_idx += 1  # Move to next stage
+
             # ── Restart pipeline from stage 1 ──
             if restart_requested:
-                print("INFERENCE_DONE", flush=True)
                 logger.info("Reloading first model for pipeline restart...")
+                print(f"STAGE_LOADING:{pipeline_stages[0]['name']}", flush=True)
                 model = ACTPolicy.from_pretrained(pipeline_stages[0]["model"])
                 model.eval()
                 preprocess, postprocess = make_pre_post_processors(
                     model.config, pretrained_path=pipeline_stages[0]["model"]
                 )
+                print(f"STAGE_LOADED:{pipeline_stages[0]['name']}", flush=True)
                 events["stop_recording"] = False
+                events["exit_early"] = False
+                events["emergency_stop"] = False
+                events["go_to_rest"] = False
+                events["auto_stopped"] = False
+                events["_restart"] = False
+                events["_retry"] = False
+                # Go directly back to stage loop (skip wait_for_start)
+                _skip_wait = True
                 continue
 
             # ── Pipeline complete ──
