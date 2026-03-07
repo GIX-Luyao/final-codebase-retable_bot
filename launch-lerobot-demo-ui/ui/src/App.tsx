@@ -144,16 +144,16 @@ const CameraFeed: FC<{ name: string; active: boolean; handDetected?: boolean; is
           <div className="w-5 h-5 border-2 border-slate-700 border-t-[#00f0ff] rounded-full animate-smooth-spin" />
         </div>
       )}
-      <div className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-black/80 rounded text-[8px] font-heading tracking-[0.3em] text-[#d2ff00]/80 border border-[#d2ff00]/15">
+      <div className="absolute top-2.5 left-2.5 px-3 py-1 bg-black/80 rounded text-sm font-heading tracking-[0.3em] text-[#d2ff00]/80 border border-[#d2ff00]/15">
         {name}
       </div>
       {hasFrame && (
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 bg-black/80 rounded border border-red-500/20">
-          <span className="relative flex h-1.5 w-1.5">
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 bg-black/80 rounded border border-red-500/20">
+          <span className="relative flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
           </span>
-          <span className="text-[8px] font-heading tracking-[0.2em] text-red-400">LIVE</span>
+          <span className="text-sm font-heading tracking-[0.2em] text-red-400">LIVE</span>
         </div>
       )}
       {isHandCamera && handDetected && hasFrame && (
@@ -161,12 +161,12 @@ const CameraFeed: FC<{ name: string; active: boolean; handDetected?: boolean; is
           <div className="absolute inset-0 bg-red-600/25 animate-pulse" />
           <div className="relative z-10 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur rounded-lg border border-red-400/40 glow-red">
             <span className="text-lg">🖐️</span>
-            <span className="text-[10px] font-heading font-bold text-white tracking-[0.2em]">DETECTED</span>
+            <span className="text-sm font-heading font-bold text-white tracking-[0.2em]">DETECTED</span>
           </div>
         </div>
       )}
       {isHandCamera && !handDetected && hasFrame && (
-        <div className="absolute bottom-1.5 right-1.5 px-2 py-0.5 bg-emerald-900/70 rounded text-[8px] font-heading tracking-[0.2em] text-emerald-300 border border-emerald-500/20">
+        <div className="absolute bottom-2.5 right-2.5 px-3 py-1 bg-emerald-900/70 rounded text-sm font-heading tracking-[0.2em] text-emerald-300 border border-emerald-500/20">
           ✓ SAFE
         </div>
       )}
@@ -182,10 +182,10 @@ const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetec
   useEffect(() => { fetch('/api/cameras').then(r => r.json()).then(d => setCameras(d.cameras || [])).catch(() => {}) }, [])
   if (cameras.length === 0) return null
   return (
-    <div className="flex flex-col gap-2.5 w-full">
+    <div className="flex flex-col gap-3 w-full">
       <div className="flex items-center gap-2">
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#d2ff0015] to-transparent" />
-        <span className="text-[9px] font-heading tracking-[0.4em] text-[#d2ff00]/40">FEEDS</span>
+        <span className="text-sm font-heading tracking-[0.4em] text-[#d2ff00]/40">FEEDS</span>
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#d2ff0015] to-transparent" />
       </div>
       {cameras.map(name => (
@@ -329,46 +329,46 @@ function App() {
       <FloatingParticles />
 
       {/* ═══ HEADER ═══ */}
-      <header className={`relative z-10 w-full px-4 lg:px-6 h-11 flex items-center justify-between
+      <header className={`relative z-10 w-full px-6 lg:px-10 h-14 flex items-center justify-between
                           border-b border-white/[0.04] backdrop-blur-md flex-shrink-0
                           transition-all duration-500 ${mounted ? 'opacity-100' : 'opacity-0 -translate-y-2'}`}>
-        <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-md bg-[#d2ff00] flex items-center justify-center">
-            <span className="text-sm font-black text-black leading-none">R</span>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-md bg-[#d2ff00] flex items-center justify-center">
+            <span className="text-lg font-black text-black leading-none">R</span>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="font-heading text-base tracking-[0.2em] text-white/90">RETABLE</span>
-            <span className="font-heading text-base tracking-[0.2em] text-[#d2ff00]">BOT</span>
+          <div className="flex items-baseline gap-2">
+            <span className="font-heading text-xl tracking-[0.2em] text-white/90">RETABLE</span>
+            <span className="font-heading text-xl tracking-[0.2em] text-[#d2ff00]">BOT</span>
           </div>
         </div>
-        <div className={`flex items-center gap-1.5 text-[9px] font-heading tracking-[0.2em] ${
+        <div className={`flex items-center gap-2 text-sm font-heading tracking-[0.2em] ${
           connected ? 'text-emerald-400' : 'text-red-400'
         }`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-red-400'}`} />
+          <span className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-red-400'}`} />
           {connected ? 'ONLINE' : reconnecting ? 'RECONNECTING' : 'OFFLINE'}
         </div>
       </header>
 
       {/* ═══ MAIN ═══ */}
-      <main className={`relative z-10 flex-1 flex flex-col lg:flex-row w-full px-4 lg:px-6 py-3 gap-4 lg:gap-5
-                        max-w-[1600px] mx-auto overflow-hidden min-h-0
+      <main className={`relative z-10 flex-1 flex flex-col lg:flex-row w-full px-6 lg:px-10 py-4 gap-5 lg:gap-8
+                        overflow-hidden min-h-0
                         transition-all duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
 
         {/* ═══ LEFT COLUMN ═══ */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 max-w-2xl mx-auto lg:mx-0 w-full overflow-y-auto custom-scroll">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 lg:mx-0 w-full overflow-y-auto custom-scroll">
 
           {/* ─── HERO STATE ─── */}
-          <div className="relative mb-3 lg:mb-4 flex-shrink-0">
+          <div className="relative mb-4 lg:mb-6 flex-shrink-0">
             <div className="relative overflow-hidden">
               <h2 className={`font-heading leading-[0.85] tracking-[0.04em] transition-colors duration-500 ${meta.textGlow}`}
                 style={{
                   color: meta.color,
-                  fontSize: 'clamp(3.5rem, 8vw, 7rem)',
+                  fontSize: 'clamp(4.5rem, 10vw, 9rem)',
                   textShadow: `0 0 40px ${meta.color}40, 0 0 80px ${meta.color}15`,
                 }}>
                 {autoStopped && isPaused ? 'HAND\nSTOP' : meta.label}
               </h2>
-              <div className="h-[3px] mt-1 rounded-full overflow-hidden" style={{ background: `${meta.color}15` }}>
+              <div className="h-1 mt-2 rounded-full overflow-hidden" style={{ background: `${meta.color}15` }}>
                 <div className={`h-full rounded-full transition-all duration-1000 ${
                   (isRunning || isWarmup) ? 'animate-shimmer-bar' : ''
                 }`} style={{
@@ -377,29 +377,29 @@ function App() {
                 }} />
               </div>
             </div>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="text-[10px] font-mono tracking-[0.25em] text-slate-600">{meta.sub}</span>
+            <div className="flex items-center gap-3 mt-3">
+              <span className="text-base font-mono tracking-[0.25em] text-slate-600">{meta.sub}</span>
               {step && (
                 <>
                   <span className="text-slate-700">·</span>
-                  <span className="text-[10px] font-mono tracking-wider text-slate-500">{step}</span>
+                  <span className="text-base font-mono tracking-wider text-slate-500">{step}</span>
                 </>
               )}
             </div>
             {message && (
-              <p className="text-[11px] text-slate-500 mt-1 font-mono leading-relaxed">{message}</p>
+              <p className="text-base text-slate-500 mt-2 font-mono leading-relaxed">{message}</p>
             )}
           </div>
 
           {/* ─── PROGRESS ─── */}
-          <div className="mb-3 flex-shrink-0">
-            <div className="flex items-baseline justify-between mb-1">
-              <span className="text-[9px] font-heading tracking-[0.4em] text-slate-600">{isWarmup ? 'LOADING' : 'PROGRESS'}</span>
-              <span className="font-heading text-2xl lg:text-3xl tracking-wider" style={{ color: meta.color }}>
-                {progress}<span className="text-sm text-slate-600">%</span>
+          <div className="mb-4 flex-shrink-0">
+            <div className="flex items-baseline justify-between mb-2">
+              <span className="text-sm font-heading tracking-[0.4em] text-slate-600">{isWarmup ? 'LOADING' : 'PROGRESS'}</span>
+              <span className="font-heading text-3xl lg:text-4xl tracking-wider" style={{ color: meta.color }}>
+                {progress}<span className="text-lg text-slate-600">%</span>
               </span>
             </div>
-            <div className="h-3 bg-white/[0.03] rounded-sm overflow-hidden border border-white/[0.04]">
+            <div className="h-4 bg-white/[0.03] rounded-sm overflow-hidden border border-white/[0.04]">
               <div className={`h-full transition-all duration-700 ease-out relative ${
                 (isRunning || isWarmup) ? 'progress-glow' : ''
               }`}
@@ -415,18 +415,18 @@ function App() {
 
           {/* ─── PIPELINE ─── */}
           {pipelineTotal > 0 && (
-            <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-              <span className="text-[9px] font-heading tracking-[0.3em] text-slate-600 flex-shrink-0">PIPELINE</span>
-              <div className="flex items-center gap-1 flex-1">
+            <div className="flex items-center gap-3 mb-4 flex-shrink-0">
+              <span className="text-sm font-heading tracking-[0.3em] text-slate-600 flex-shrink-0">PIPELINE</span>
+              <div className="flex items-center gap-1.5 flex-1">
                 {Array.from({ length: pipelineTotal }, (_, i) => {
                   const isActive = i === pipelineStageIdx && (isRunning || pipelineStatus !== '')
                   const isDone = i < pipelineStageIdx || state === 'DONE'
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
-                      <div className={`w-full h-1 rounded-full transition-all duration-500 ${
+                    <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                      <div className={`w-full h-1.5 rounded-full transition-all duration-500 ${
                         isDone ? 'bg-[#d2ff00]' : isActive ? 'bg-[#00f0ff] progress-glow' : 'bg-white/[0.06]'
                       }`} />
-                      <span className={`text-[7px] font-mono truncate max-w-full ${
+                      <span className={`text-xs font-mono truncate max-w-full ${
                         isDone ? 'text-[#d2ff00]/60' : isActive ? 'text-[#00f0ff]/60' : 'text-slate-800'
                       }`}>
                         {i === pipelineStageIdx && pipelineStage ? pipelineStage : ''}
@@ -436,7 +436,7 @@ function App() {
                 })}
               </div>
               {pipelineStatus && (
-                <span className={`text-[8px] font-heading tracking-[0.2em] px-2 py-0.5 rounded border flex-shrink-0 ${
+                <span className={`text-sm font-heading tracking-[0.2em] px-2.5 py-1 rounded border flex-shrink-0 ${
                   pipelineStatus === 'inference' ? 'border-blue-500/30 text-blue-400' :
                   pipelineStatus === 'waypoints' ? 'border-violet-500/30 text-violet-400' :
                   'border-cyan-500/30 text-cyan-400'
@@ -448,7 +448,7 @@ function App() {
           )}
 
           {/* ─── HAND SAFETY ─── */}
-          <div className={`flex items-center justify-between py-2 px-3 rounded-lg mb-3 flex-shrink-0 transition-all duration-300 border ${
+          <div className={`flex items-center justify-between py-3 px-4 rounded-lg mb-4 flex-shrink-0 transition-all duration-300 border ${
             handDetected
               ? 'border-red-500/50 bg-red-500/[0.06] glow-red'
               : handDetect
@@ -456,8 +456,8 @@ function App() {
                 : 'border-white/[0.04] bg-white/[0.01]'
           }`}>
             <div className="flex items-center gap-2">
-              <IconHand size={18} color={handDetected ? '#ef4444' : handDetect ? '#10b981' : '#555'} />
-              <span className={`text-[10px] font-heading tracking-[0.15em] ${
+              <IconHand size={22} color={handDetected ? '#ef4444' : handDetect ? '#10b981' : '#555'} />
+              <span className={`text-base font-heading tracking-[0.15em] ${
                 handDetected ? 'text-red-400' : handDetect ? 'text-emerald-400/80' : 'text-slate-600'
               }`}>
                 {handDetected ? 'HAND DETECTED — STOPPED' : handDetect ? 'HAND SAFETY ACTIVE' : 'HAND SAFETY OFF'}
@@ -465,10 +465,10 @@ function App() {
               {handDetected && <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />}
             </div>
             <button onClick={doToggleHand} disabled={isWarmup}
-              className={`relative w-10 h-5 rounded-full transition-all duration-300 flex-shrink-0
+              className={`relative w-12 h-6 rounded-full transition-all duration-300 flex-shrink-0
                          ${isWarmup ? 'opacity-30 cursor-not-allowed' : handDetect ? 'bg-emerald-500' : 'bg-slate-700'}`}>
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300
-                              ${handDetect ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+              <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300
+                              ${handDetect ? 'translate-x-[26px]' : 'translate-x-0.5'}`} />
             </button>
           </div>
 
@@ -484,22 +484,22 @@ function App() {
 
             {/* Warmup state */}
             {isWarmup && (
-              <div className="flex items-center justify-center gap-3 py-4 rounded-xl border border-[#00f0ff]/10 bg-[#00f0ff]/[0.02] neon-border-animated mb-3">
-                <div className="w-5 h-5 border-2 border-[#00f0ff] border-t-transparent rounded-full animate-smooth-spin" />
-                <span className="text-sm font-heading tracking-[0.15em] text-slate-500">LOADING MODEL…</span>
+              <div className="flex items-center justify-center gap-4 py-5 rounded-xl border border-[#00f0ff]/10 bg-[#00f0ff]/[0.02] neon-border-animated mb-4">
+                <div className="w-6 h-6 border-2 border-[#00f0ff] border-t-transparent rounded-full animate-smooth-spin" />
+                <span className="text-base font-heading tracking-[0.15em] text-slate-500">LOADING MODEL…</span>
               </div>
             )}
 
             {/* ── Primary Action — the hero button ── */}
             {canStart && (
-              <div className="mb-3">
+              <div className="mb-4">
                 <button onClick={doStart}
-                  className="group w-full py-5 lg:py-6 rounded-xl font-heading font-black text-xl lg:text-2xl tracking-[0.2em]
+                  className="group w-full py-6 lg:py-8 rounded-xl font-heading font-black text-2xl lg:text-3xl tracking-[0.2em]
                              bg-[#d2ff00] text-black hover:bg-[#e5ff4d]
                              shadow-[0_0_40px_rgba(210,255,0,0.2)] hover:shadow-[0_0_60px_rgba(210,255,0,0.4)]
                              transition-all duration-200 btn-press relative overflow-hidden">
                   <span className="relative z-10 flex items-center justify-center gap-3">
-                    <IconPlay size={24} />
+                    <IconPlay size={28} />
                     START INFERENCE
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
@@ -508,14 +508,14 @@ function App() {
             )}
 
             {isPaused && (
-              <div className="mb-3">
+              <div className="mb-4">
                 <button onClick={doResume}
-                  className="group w-full py-5 lg:py-6 rounded-xl font-heading font-black text-xl lg:text-2xl tracking-[0.2em]
+                  className="group w-full py-6 lg:py-8 rounded-xl font-heading font-black text-2xl lg:text-3xl tracking-[0.2em]
                              bg-blue-500 text-white hover:bg-blue-400
                              shadow-[0_0_40px_rgba(59,130,246,0.25)] hover:shadow-[0_0_60px_rgba(59,130,246,0.4)]
                              transition-all duration-200 btn-press relative overflow-hidden">
                   <span className="relative z-10 flex items-center justify-center gap-3">
-                    <IconPlay size={24} className="text-white" />
+                    <IconPlay size={28} className="text-white" />
                     RESUME
                   </span>
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
@@ -525,13 +525,13 @@ function App() {
 
             {/* ── Secondary Actions — icon-driven grid ── */}
             {(canStart || isPaused || hasProcess) && (
-              <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-3 gap-3 mb-4">
                 {/* Home */}
                 <button onClick={doHome} disabled={isWarmup}
                   className="action-tile group"
                   style={{ '--tile-color': '#d2ff00' } as React.CSSProperties}>
-                  <IconHome size={20} className="text-[#d2ff00]/60 group-hover:text-[#d2ff00] transition-colors" />
-                  <span className="text-[9px] font-heading tracking-[0.2em] text-[#d2ff00]/50 group-hover:text-[#d2ff00]/90 transition-colors">HOME</span>
+                  <IconHome size={28} className="text-[#d2ff00]/60 group-hover:text-[#d2ff00] transition-colors" />
+                  <span className="text-sm font-heading tracking-[0.2em] text-[#d2ff00]/50 group-hover:text-[#d2ff00]/90 transition-colors">HOME</span>
                 </button>
 
                 {/* Restart — only when paused */}
@@ -539,13 +539,13 @@ function App() {
                   <button onClick={doRestart}
                     className="action-tile group"
                     style={{ '--tile-color': '#f97316' } as React.CSSProperties}>
-                    <IconRefresh size={18} className="text-orange-400/60 group-hover:text-orange-400 transition-colors" />
-                    <span className="text-[9px] font-heading tracking-[0.2em] text-orange-400/50 group-hover:text-orange-400/90 transition-colors">RESTART</span>
+                    <IconRefresh size={26} className="text-orange-400/60 group-hover:text-orange-400 transition-colors" />
+                    <span className="text-sm font-heading tracking-[0.2em] text-orange-400/50 group-hover:text-orange-400/90 transition-colors">RESTART</span>
                   </button>
                 ) : (
                   <div className="action-tile-disabled">
-                    <IconRefresh size={18} className="text-slate-800" />
-                    <span className="text-[9px] font-heading tracking-[0.2em] text-slate-800">RESTART</span>
+                    <IconRefresh size={26} className="text-slate-800" />
+                    <span className="text-sm font-heading tracking-[0.2em] text-slate-800">RESTART</span>
                   </div>
                 )}
 
@@ -554,13 +554,13 @@ function App() {
                   <button onClick={doRetry}
                     className="action-tile group"
                     style={{ '--tile-color': '#00f0ff' } as React.CSSProperties}>
-                    <IconZap size={18} className="text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
-                    <span className="text-[9px] font-heading tracking-[0.2em] text-cyan-400/50 group-hover:text-cyan-400/90 transition-colors">RETRY</span>
+                    <IconZap size={26} className="text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
+                    <span className="text-sm font-heading tracking-[0.2em] text-cyan-400/50 group-hover:text-cyan-400/90 transition-colors">RETRY</span>
                   </button>
                 ) : (
                   <div className="action-tile-disabled">
-                    <IconZap size={18} className="text-slate-800" />
-                    <span className="text-[9px] font-heading tracking-[0.2em] text-slate-800">RETRY</span>
+                    <IconZap size={26} className="text-slate-800" />
+                    <span className="text-sm font-heading tracking-[0.2em] text-slate-800">RETRY</span>
                   </div>
                 )}
               </div>
@@ -569,10 +569,10 @@ function App() {
             {/* Quit — subtle, only when process active */}
             {hasProcess && (
               <button onClick={doQuit}
-                className="w-full py-1.5 text-[10px] font-heading tracking-[0.25em] text-slate-700 hover:text-slate-500
+                className="w-full py-2 text-sm font-heading tracking-[0.25em] text-slate-700 hover:text-slate-500
                            transition-colors duration-200 mb-2 flex-shrink-0">
-                <span className="flex items-center justify-center gap-1.5">
-                  <IconX size={12} />
+                <span className="flex items-center justify-center gap-2">
+                  <IconX size={14} />
                   QUIT SESSION
                 </span>
               </button>
@@ -582,13 +582,13 @@ function App() {
             <div className="flex-1 min-h-1" />
 
             {/* ═══ EMERGENCY STOP — always anchored at bottom ═══ */}
-            <div className="w-full flex-shrink-0 pt-2">
+            <div className="w-full flex-shrink-0 pt-3">
               <button
                 onClick={hasProcess ? doStop : undefined}
                 disabled={!hasProcess}
                 className={`w-full rounded-xl font-heading font-black transition-all duration-200 select-none btn-press
                             ${hasProcess
-                              ? `py-5 lg:py-7 text-2xl lg:text-3xl tracking-[0.25em]
+                              ? `py-6 lg:py-8 text-3xl lg:text-4xl tracking-[0.25em]
                                  bg-gradient-to-b from-red-500 to-red-700 text-white
                                  border-2 border-red-400/40 hover:border-red-300/60
                                  estop-active
@@ -596,17 +596,17 @@ function App() {
                                  hover:shadow-[0_0_70px_rgba(239,68,68,0.45),0_0_120px_rgba(239,68,68,0.15)]
                                  hover:from-red-400 hover:to-red-600
                                  active:from-red-600 active:to-red-800`
-                              : `py-3 text-xs tracking-[0.2em]
+                              : `py-4 text-base tracking-[0.2em]
                                  bg-white/[0.015] text-slate-800 cursor-default border border-white/[0.03]`
                             }`}>
                 {hasProcess ? (
                   <span className="flex items-center justify-center gap-3">
-                    <IconStop size={28} />
+                    <IconStop size={34} />
                     EMERGENCY STOP
                   </span>
                 ) : (
                   <span className="flex items-center justify-center gap-2 opacity-40">
-                    <IconStop size={14} />
+                    <IconStop size={18} />
                     E-STOP
                   </span>
                 )}
@@ -617,7 +617,7 @@ function App() {
         </div>{/* end left column */}
 
         {/* ═══ RIGHT COLUMN ═══ */}
-        <div className={`hidden lg:flex lg:w-[340px] xl:w-[380px] 2xl:w-[420px] flex-shrink-0 min-w-0 flex-col gap-2.5
+        <div className={`hidden lg:flex lg:w-[400px] xl:w-[460px] 2xl:w-[520px] flex-shrink-0 min-w-0 flex-col gap-3
                         overflow-y-auto transition-all duration-500 delay-150
                         ${mounted ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-6'}`}>
           <SidebarCameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
@@ -626,10 +626,10 @@ function App() {
       </main>
 
       {/* ═══ TOASTS ═══ */}
-      <div className="fixed top-2 left-1/2 -translate-x-1/2 flex flex-col gap-1.5 pointer-events-none z-50 w-[90vw] max-w-xs">
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 flex flex-col gap-2 pointer-events-none z-50 w-[90vw] max-w-sm">
         {toasts.map(t => (
           <div key={t.id}
-            className={`px-4 py-2 rounded-md text-[10px] font-heading tracking-[0.15em] text-center
+            className={`px-5 py-3 rounded-lg text-sm font-heading tracking-[0.15em] text-center
                         shadow-xl backdrop-blur-md border animate-fadeInUp
               ${t.type === 'success' ? 'bg-emerald-600/90 border-emerald-400/20 text-white' :
                 t.type === 'error'   ? 'bg-red-600/90 border-red-400/20 text-white' :
@@ -642,20 +642,20 @@ function App() {
       {/* ═══ FEEDBACK MODAL ═══ */}
       {showFeedback && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 z-50">
-          <div className="bg-[#0a0a0a] rounded-xl p-6 w-full max-w-sm border border-white/[0.06] animate-scaleIn"
+          <div className="bg-[#0a0a0a] rounded-xl p-8 w-full max-w-md border border-white/[0.06] animate-scaleIn"
             style={{ boxShadow: '0 0 80px rgba(210,255,0,0.05)' }}>
-            <h2 className="font-heading text-3xl text-center tracking-[0.15em] mb-5 gradient-text">
+            <h2 className="font-heading text-4xl text-center tracking-[0.15em] mb-6 gradient-text">
               HOW DID IT GO?
             </h2>
-            <div className="flex justify-center gap-4 mb-5">
+            <div className="flex justify-center gap-5 mb-6">
               <button onClick={() => setFbScore('up')}
-                className={`w-20 h-20 rounded-xl text-4xl flex items-center justify-center transition-all duration-200 border ${
+                className={`w-24 h-24 rounded-xl text-5xl flex items-center justify-center transition-all duration-200 border ${
                   fbScore === 'up'
                     ? 'bg-emerald-500/20 border-emerald-500/50 scale-105 shadow-[0_0_30px_rgba(16,185,129,0.2)]'
                     : 'bg-white/[0.02] border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/[0.05]'
                 }`}>👍</button>
               <button onClick={() => setFbScore('down')}
-                className={`w-20 h-20 rounded-xl text-4xl flex items-center justify-center transition-all duration-200 border ${
+                className={`w-24 h-24 rounded-xl text-5xl flex items-center justify-center transition-all duration-200 border ${
                   fbScore === 'down'
                     ? 'bg-red-500/20 border-red-500/50 scale-105 shadow-[0_0_30px_rgba(239,68,68,0.2)]'
                     : 'bg-white/[0.02] border-white/[0.06] hover:border-red-500/30 hover:bg-red-500/[0.05]'
@@ -663,12 +663,12 @@ function App() {
             </div>
             {fbScore === 'down' && (
               <div className="mb-4 animate-fadeInUp">
-                <p className="text-[9px] font-heading text-slate-600 text-center tracking-[0.3em] mb-2">WHAT WENT WRONG?</p>
-                <div className="flex flex-wrap gap-1.5 justify-center">
+                <p className="text-xs font-heading text-slate-600 text-center tracking-[0.3em] mb-3">WHAT WENT WRONG?</p>
+                <div className="flex flex-wrap gap-2 justify-center">
                   {FEEDBACK_TAGS.map(tag => (
                     <button key={tag}
                       onClick={() => setFbTags(p => p.includes(tag) ? p.filter(t => t !== tag) : [...p, tag])}
-                      className={`px-2 py-1 rounded text-[9px] font-mono transition-all border ${
+                      className={`px-3 py-1.5 rounded text-xs font-mono transition-all border ${
                         fbTags.includes(tag)
                           ? 'bg-red-500/15 border-red-500/30 text-red-300'
                           : 'bg-white/[0.02] border-white/[0.06] text-slate-500 hover:border-white/[0.12]'
@@ -679,13 +679,13 @@ function App() {
             )}
             <div className="flex gap-2">
               <button onClick={() => { setShowFeedback(false); setFbScore(null); setFbTags([]) }}
-                className="flex-1 py-2.5 rounded-lg text-[10px] font-heading tracking-[0.15em]
+                className="flex-1 py-3 rounded-lg text-sm font-heading tracking-[0.15em]
                            text-slate-500 border border-white/[0.06] hover:border-white/[0.12] hover:text-slate-300
                            transition-all btn-press">
                 SKIP
               </button>
               <button onClick={submitFeedback} disabled={!fbScore}
-                className={`flex-1 py-2.5 rounded-lg text-[10px] font-heading tracking-[0.15em] transition-all btn-press ${
+                className={`flex-1 py-3 rounded-lg text-sm font-heading tracking-[0.15em] transition-all btn-press ${
                   fbScore
                     ? 'bg-[#d2ff00] text-black font-bold hover:bg-[#e5ff4d] shadow-[0_0_20px_rgba(210,255,0,0.15)]'
                     : 'bg-white/[0.02] border border-white/[0.06] text-slate-700 cursor-not-allowed'
