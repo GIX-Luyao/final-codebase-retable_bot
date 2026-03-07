@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useRef, type FC } from 'react'
-// @ts-ignore
-import PreflightCheck from './PreflightCheck'
 
 /* ================================================================
    Types
@@ -19,7 +17,7 @@ interface StatusMessage {
   pipeline_stage?: string
   pipeline_stage_idx?: number
   pipeline_total?: number
-  pipeline_status?: string   // "inference" | "waypoints" | "loading" | ""
+  pipeline_status?: string
 }
 
 interface Toast {
@@ -33,17 +31,15 @@ interface Toast {
    ================================================================ */
 
 const STATE_META: Record<RobotState, {
-  label: string; icon: string
-  ring: string; bg: string; glow: string; text: string
+  label: string; sub: string; color: string; glow: string; textGlow: string
 }> = {
-  WARMUP:  { label: 'Warming Up',  icon: '🔄', ring: 'ring-cyan-400',    bg: 'bg-cyan-500/20',    glow: 'shadow-cyan-500/30',    text: 'text-cyan-400' },
-  READY:   { label: 'Ready',       icon: '🤖', ring: 'ring-emerald-400', bg: 'bg-emerald-500/20', glow: 'shadow-emerald-500/30', text: 'text-emerald-400' },
-  WORKING: { label: 'Running',     icon: '⚡',  ring: 'ring-blue-400',    bg: 'bg-blue-500/20',    glow: 'shadow-blue-500/40',    text: 'text-blue-400' },
-  PAUSED:  { label: 'Stopped',     icon: '⏸️',  ring: 'ring-amber-400',   bg: 'bg-amber-500/20',   glow: 'shadow-amber-500/30',   text: 'text-amber-400' },
-  // Note: auto_stopped is shown via the hand safety bar, not a separate orb state
-  HOMED:   { label: 'At Home',     icon: '🏠', ring: 'ring-violet-400',  bg: 'bg-violet-500/20',  glow: 'shadow-violet-500/30',  text: 'text-violet-400' },
-  DONE:    { label: 'Complete',    icon: '✅',  ring: 'ring-emerald-400', bg: 'bg-emerald-500/20', glow: 'shadow-emerald-500/30', text: 'text-emerald-400' },
-  ERROR:   { label: 'Error',       icon: '⚠️',  ring: 'ring-red-400',     bg: 'bg-red-500/20',     glow: 'shadow-red-500/30',     text: 'text-red-400' },
+  WARMUP:  { label: 'WARMING UP',  sub: 'INITIALIZING SYSTEMS',   color: '#00f0ff', glow: 'glow-cyan',   textGlow: 'text-glow-cyan' },
+  READY:   { label: 'READY',       sub: 'AWAITING COMMAND',       color: '#d2ff00', glow: 'glow-neon',   textGlow: 'text-glow-neon' },
+  WORKING: { label: 'RUNNING',     sub: 'INFERENCE IN PROGRESS',  color: '#3b82f6', glow: 'glow-blue',   textGlow: 'text-glow-blue' },
+  PAUSED:  { label: 'STOPPED',     sub: 'EXECUTION HALTED',       color: '#f59e0b', glow: '',            textGlow: '' },
+  HOMED:   { label: 'HOME',        sub: 'HOME POSITION',          color: '#a78bfa', glow: '',            textGlow: '' },
+  DONE:    { label: 'COMPLETE',    sub: 'TASK FINISHED',          color: '#10b981', glow: 'glow-emerald',textGlow: 'text-glow-emerald' },
+  ERROR:   { label: 'ERROR',       sub: 'SOMETHING WENT WRONG',   color: '#ef4444', glow: 'glow-red',   textGlow: 'text-glow-red' },
 }
 
 const FEEDBACK_TAGS = [
@@ -52,9 +48,73 @@ const FEEDBACK_TAGS = [
 ]
 
 /* ================================================================
-   Camera Feed Component
+   SVG Icons — inline for zero deps
    ================================================================ */
+const IconPlay: FC<{ size?: number; className?: string }> = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <polygon points="6 3 20 12 6 21 6 3"/>
+  </svg>
+)
+const IconStop: FC<{ size?: number; className?: string }> = ({ size = 20, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={className}>
+    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+  </svg>
+)
+const IconHome: FC<{ size?: number; className?: string }> = ({ size = 18, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+  </svg>
+)
+const IconRefresh: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+  </svg>
+)
+const IconX: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}>
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+)
+const IconHand: FC<{ size?: number; color?: string }> = ({ size = 18, color = '#555' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
+    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+  </svg>
+)
+const IconZap: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+  </svg>
+)
 
+/* ================================================================
+   Floating Particles
+   ================================================================ */
+const FloatingParticles: FC = () => {
+  const particles = Array.from({ length: 12 }, (_, i) => ({
+    id: i,
+    left: `${Math.random() * 100}%`,
+    top: `${Math.random() * 100}%`,
+    delay: `${Math.random() * 6}s`,
+    duration: `${5 + Math.random() * 5}s`,
+    size: Math.random() > 0.5 ? 3 : 2,
+    color: ['#d2ff00', '#00f0ff', '#ff00aa'][Math.floor(Math.random() * 3)],
+  }))
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+      {particles.map(p => (
+        <div key={p.id} className="particle"
+          style={{ left: p.left, top: p.top, width: p.size, height: p.size,
+                   background: p.color, animationDelay: p.delay, animationDuration: p.duration,
+                   boxShadow: `0 0 8px ${p.color}50` }} />
+      ))}
+    </div>
+  )
+}
+
+/* ================================================================
+   Camera Feed
+   ================================================================ */
 const CameraFeed: FC<{ name: string; active: boolean; handDetected?: boolean; isHandCamera?: boolean }> = ({ name, active, handDetected = false, isHandCamera = false }) => {
   const imgRef = useRef<HTMLImageElement>(null)
   const [hasFrame, setHasFrame] = useState(false)
@@ -62,320 +122,92 @@ const CameraFeed: FC<{ name: string; active: boolean; handDetected?: boolean; is
   useEffect(() => {
     if (!active) return
     let cancelled = false
-
     const refresh = () => {
       if (cancelled || !imgRef.current) return
       const loader = new Image()
-      loader.onload = () => {
-        if (!cancelled && imgRef.current) {
-          imgRef.current.src = loader.src
-          setHasFrame(true)
-        }
-      }
-      loader.onerror = () => {
-        if (!cancelled) setHasFrame(false)
-      }
+      loader.onload = () => { if (!cancelled && imgRef.current) { imgRef.current.src = loader.src; setHasFrame(true) } }
+      loader.onerror = () => { if (!cancelled) setHasFrame(false) }
       loader.src = `/api/frame/${name}?t=${Date.now()}`
     }
-
     refresh()
     const id = setInterval(refresh, 200)
     return () => { cancelled = true; clearInterval(id) }
   }, [name, active])
 
   return (
-    <div className={`relative rounded-xl overflow-hidden bg-gray-800/70 transition-all duration-300
-                    ${isHandCamera && handDetected
-                      ? 'ring-3 ring-red-500 shadow-lg shadow-red-500/40'
-                      : 'border border-gray-700/50'}`}>
-      <img
-        ref={imgRef}
-        alt={name}
-        className={`w-full h-auto block transition-opacity duration-300 ${hasFrame ? 'opacity-100' : 'opacity-0'}`}
-      />
+    <div className={`relative rounded-lg overflow-hidden glass-card transition-all duration-300
+                    ${isHandCamera && handDetected ? 'border-red-500/60 glow-red' : 'hover:border-[#d2ff0030]'}`}>
+      <img ref={imgRef} alt={name}
+        className={`w-full h-auto block transition-opacity duration-500 ${hasFrame ? 'opacity-100' : 'opacity-0'}`} />
       {!hasFrame && (
-        <div className="flex items-center justify-center h-40 md:h-52 text-gray-500 text-sm">
-          📷 Waiting for camera…
+        <div className="flex items-center justify-center h-32 text-slate-700">
+          <div className="w-5 h-5 border-2 border-slate-700 border-t-[#00f0ff] rounded-full animate-smooth-spin" />
         </div>
       )}
-      {/* Camera label */}
-      <div className="absolute top-2 left-2 px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-lg text-xs md:text-sm font-mono uppercase tracking-wide text-gray-200">
-        📷 {name}
+      <div className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-black/80 rounded text-[8px] font-heading tracking-[0.3em] text-[#d2ff00]/80 border border-[#d2ff00]/15">
+        {name}
       </div>
-      {/* Live indicator */}
       {hasFrame && (
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-lg">
-          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-[10px] md:text-xs font-semibold text-red-400 uppercase">Live</span>
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 bg-black/80 rounded border border-red-500/20">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500" />
+          </span>
+          <span className="text-[8px] font-heading tracking-[0.2em] text-red-400">LIVE</span>
         </div>
       )}
-      {/* ── Hand detection overlay on front camera ── */}
       {isHandCamera && handDetected && hasFrame && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          {/* Semi-transparent red overlay */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="absolute inset-0 bg-red-600/25 animate-pulse" />
-          {/* Hand detected badge */}
-          <div className="relative z-10 flex flex-col items-center gap-1.5 px-4 py-3 bg-red-600/90 backdrop-blur-sm rounded-xl shadow-xl">
-            <span className="text-3xl md:text-4xl">🖐️</span>
-            <span className="text-sm md:text-base font-bold text-white uppercase tracking-wider">Hand Detected</span>
+          <div className="relative z-10 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur rounded-lg border border-red-400/40 glow-red">
+            <span className="text-lg">🖐️</span>
+            <span className="text-[10px] font-heading font-bold text-white tracking-[0.2em]">DETECTED</span>
           </div>
         </div>
       )}
-      {/* ── Hand safety active badge (no hand, shield icon) ── */}
       {isHandCamera && !handDetected && hasFrame && (
-        <div className="absolute bottom-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-emerald-600/70 backdrop-blur-sm rounded-lg">
-          <span className="text-xs md:text-sm">🛡️</span>
-          <span className="text-[10px] md:text-xs font-semibold text-emerald-200 uppercase">Safe</span>
+        <div className="absolute bottom-1.5 right-1.5 px-2 py-0.5 bg-emerald-900/70 rounded text-[8px] font-heading tracking-[0.2em] text-emerald-300 border border-emerald-500/20">
+          ✓ SAFE
         </div>
       )}
-    </div>
-  )
-}
-
-const CameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
-  const [cameras, setCameras] = useState<string[]>([])
-
-  useEffect(() => {
-    fetch('/api/cameras')
-      .then(r => r.json())
-      .then(d => setCameras(d.cameras || []))
-      .catch(() => {})
-  }, [])
-
-  if (cameras.length === 0) return null
-
-  return (
-    <div className="w-full max-w-2xl mb-6 md:mb-8">
-      <h3 className="text-sm md:text-base uppercase tracking-wider text-gray-500 font-medium mb-3 text-center">
-        Camera Feeds
-      </h3>
-      <div className={`grid gap-3 md:gap-4 ${cameras.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-        {cameras.map(name => (
-          <CameraFeed
-            key={name}
-            name={name}
-            active={active}
-            handDetected={handDetected}
-            isHandCamera={handDetectEnabled && name === 'front'}
-          />
-        ))}
-      </div>
     </div>
   )
 }
 
 /* ================================================================
-   Sidebar Camera Feeds (large, stacked vertically for right column)
+   Sidebar / Mobile Camera Feeds
    ================================================================ */
-
 const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
   const [cameras, setCameras] = useState<string[]>([])
-
-  useEffect(() => {
-    fetch('/api/cameras')
-      .then(r => r.json())
-      .then(d => setCameras(d.cameras || []))
-      .catch(() => {})
-  }, [])
-
+  useEffect(() => { fetch('/api/cameras').then(r => r.json()).then(d => setCameras(d.cameras || [])).catch(() => {}) }, [])
   if (cameras.length === 0) return null
-
   return (
-    <div className="flex flex-col gap-4 w-full">
-      <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
-        📷 Live Camera Feeds
-      </h3>
+    <div className="flex flex-col gap-2.5 w-full">
+      <div className="flex items-center gap-2">
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#d2ff0015] to-transparent" />
+        <span className="text-[9px] font-heading tracking-[0.4em] text-[#d2ff00]/40">FEEDS</span>
+        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-[#d2ff0015] to-transparent" />
+      </div>
       {cameras.map(name => (
-        <CameraFeed
-          key={name}
-          name={name}
-          active={active}
-          handDetected={handDetected}
-          isHandCamera={handDetectEnabled && name === 'front'}
-        />
+        <CameraFeed key={name} name={name} active={active} handDetected={handDetected}
+          isHandCamera={handDetectEnabled && name === 'front'} />
       ))}
     </div>
   )
 }
 
-/* ================================================================
-   Grid Camera Feed (16-grid overlay)
-   ================================================================ */
-
-// @ts-ignore
-const GridCameraFeed: FC<{ active: boolean }> = ({ active }) => {
-  const imgRef = useRef<HTMLImageElement>(null)
-  const [hasFrame, setHasFrame] = useState(false)
-
-  useEffect(() => {
-    if (!active) return
-    let cancelled = false
-
-    const refresh = () => {
-      if (cancelled || !imgRef.current) return
-      const loader = new Image()
-      loader.onload = () => {
-        if (!cancelled && imgRef.current) {
-          imgRef.current.src = loader.src
-          setHasFrame(true)
-        }
-      }
-      loader.onerror = () => {
-        if (!cancelled) setHasFrame(false)
-      }
-      loader.src = `/api/frame-grid/front?t=${Date.now()}`
-    }
-
-    refresh()
-    const id = setInterval(refresh, 300) // ~3fps for grid view
-    return () => { cancelled = true; clearInterval(id) }
-  }, [active])
-
+const MobileCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
+  const [cameras, setCameras] = useState<string[]>([])
+  useEffect(() => { fetch('/api/cameras').then(r => r.json()).then(d => setCameras(d.cameras || [])).catch(() => {}) }, [])
+  if (cameras.length === 0) return null
   return (
-    <div className="relative rounded-xl overflow-hidden bg-gray-800/70 border border-gray-700/50">
-      <img
-        ref={imgRef}
-        alt="Grid View"
-        className={`w-full h-auto block transition-opacity duration-300 ${hasFrame ? 'opacity-100' : 'opacity-0'}`}
-      />
-      {!hasFrame && (
-        <div className="flex items-center justify-center h-48 text-gray-500 text-sm">
-          📷 Waiting for grid view…
-        </div>
-      )}
-      {/* Label */}
-      <div className="absolute top-2 left-2 px-2.5 py-1 bg-black/60 backdrop-blur-sm rounded-lg text-xs font-mono uppercase tracking-wide text-gray-200">
-        🔲 16-Grid View
-      </div>
-      {/* Live indicator */}
-      {hasFrame && (
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-lg">
-          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-[10px] font-semibold text-red-400 uppercase">Live</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ================================================================
-   Point Mover (move arm to preposition 1-16)
-   ================================================================ */
-
-// @ts-ignore
-const PointMover: FC<{ enabled: boolean; toast: (msg: string, type: 'success' | 'error' | 'info') => void }> = ({ enabled, toast: showToast }) => {
-  const [pointNum, setPointNum] = useState('')
-  const [moving, setMoving] = useState(false)
-  const [lastResult, setLastResult] = useState<{ status: string; message: string } | null>(null)
-
-  const handleMove = async (num?: number) => {
-    const target = num ?? parseInt(pointNum)
-    if (isNaN(target) || target < 1 || target > 16) {
-      setLastResult({ status: 'error', message: 'Enter 1-16' })
-      return
-    }
-
-    setMoving(true)
-    setLastResult(null)
-
-    try {
-      const r = await fetch('/api/move-to-point', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ point: target }),
-      })
-      const data = await r.json()
-      setLastResult(data)
-      if (data.status === 'ok') {
-        showToast(`Moving to position ${target}…`, 'info')
-      } else {
-        showToast(data.message || 'Move failed', 'error')
-      }
-    } catch {
-      setLastResult({ status: 'error', message: 'Network error' })
-      showToast('Move failed: network error', 'error')
-    } finally {
-      // Command sent — actual movement tracked via WebSocket state
-      setTimeout(() => setMoving(false), 500)
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleMove()
-  }
-
-  return (
-    <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-5 space-y-4">
-      <h3 className="text-sm uppercase tracking-wider text-gray-500 font-medium text-center">
-        🎯 Move to Position
-      </h3>
-
-      {/* Input + Go button */}
-      <div className="flex gap-3">
-        <input
-          type="number"
-          min={1}
-          max={16}
-          value={pointNum}
-          onChange={(e) => setPointNum(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="1-16"
-          disabled={!enabled || moving}
-          className="flex-1 px-4 py-3 bg-gray-700 rounded-xl text-white text-lg text-center
-                     placeholder-gray-500 border border-gray-600 focus:border-blue-500 focus:outline-none
-                     disabled:opacity-40 disabled:cursor-not-allowed
-                     [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-        />
-        <button
-          onClick={() => handleMove()}
-          disabled={!enabled || moving || !pointNum}
-          className={`px-6 py-3 rounded-xl font-bold text-lg transition-all duration-200
-                     ${enabled && !moving && pointNum
-                       ? 'bg-blue-600 hover:bg-blue-500 active:bg-blue-700 shadow-lg shadow-blue-600/25'
-                       : 'bg-gray-700 opacity-40 cursor-not-allowed'}`}
-        >
-          {moving ? '⏳' : '▶'}
-        </button>
-      </div>
-
-      {/* Quick-select grid (4×4) */}
-      <div className="grid grid-cols-4 gap-1.5">
-        {Array.from({ length: 16 }, (_, i) => i + 1).map(n => (
-          <button
-            key={n}
-            onClick={() => { setPointNum(String(n)); handleMove(n) }}
-            disabled={!enabled || moving}
-            className={`py-2 rounded-lg text-sm font-semibold transition-all duration-150
-                       ${!enabled || moving
-                         ? 'bg-gray-700/50 text-gray-600 cursor-not-allowed'
-                         : 'bg-gray-700 hover:bg-blue-600 active:bg-blue-700 text-gray-300 hover:text-white'}`}
-          >
-            {n}
-          </button>
+    <div className="w-full mb-2">
+      <div className={`grid gap-2 ${cameras.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+        {cameras.map(name => (
+          <CameraFeed key={name} name={name} active={active} handDetected={handDetected}
+            isHandCamera={handDetectEnabled && name === 'front'} />
         ))}
       </div>
-
-      {/* Result message */}
-      {lastResult && (
-        <p className={`text-sm text-center font-medium ${lastResult.status === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
-          {lastResult.message}
-        </p>
-      )}
-
-      {/* Disabled hint */}
-      {!enabled && !moving && (
-        <p className="text-xs text-gray-600 text-center">
-          Available when robot is Ready / Home / Done
-        </p>
-      )}
-
-      {/* Moving indicator */}
-      {moving && (
-        <div className="flex items-center justify-center gap-2 text-blue-400">
-          <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm font-medium">Moving arm…</span>
-        </div>
-      )}
     </div>
   )
 }
@@ -402,40 +234,35 @@ function App() {
   const [pipelineStageIdx, setPipelineStageIdx] = useState(0)
   const [pipelineTotal, setPipelineTotal]     = useState(0)
   const [pipelineStatus, setPipelineStatus]   = useState('')
+  const [mounted, setMounted] = useState(false)
 
   const wsRef     = useRef<WebSocket | null>(null)
   const reconnRef = useRef<number | null>(null)
   const toastId   = useRef(0)
 
-  /* ── helpers ── */
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 50); return () => clearTimeout(t) }, [])
 
   const toast = useCallback((msg: string, type: Toast['type']) => {
     const id = ++toastId.current
     setToasts(p => [...p, { id, message: msg, type }])
-    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3000)
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3500)
   }, [])
 
-  const api = useCallback(
-    async (endpoint: string, label: string) => {
-      try {
-        const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-        const data = await r.json()
-        if (r.ok && data.status === 'ok') {
-          toast(label, 'success')
-        } else {
-          toast(data.message || `${label} failed`, 'error')
-        }
-      } catch { toast(`${label}: network error`, 'error') }
-    },
-    [toast],
-  )
+  const api = useCallback(async (endpoint: string, label: string) => {
+    try {
+      const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      const data = await r.json()
+      if (r.ok && data.status === 'ok') toast(label, 'success')
+      else toast(data.message || `${label} failed`, 'error')
+    } catch { toast(`${label}: network error`, 'error') }
+  }, [toast])
 
   const doStart   = useCallback(() => api('/api/start',   'Inference started'),  [api])
   const doStop    = useCallback(() => api('/api/stop',   'Emergency stop'),     [api])
   const doHome    = useCallback(() => api('/api/reset',  'Going to home'),      [api])
   const doResume  = useCallback(() => api('/api/resume', 'Resumed'),            [api])
-  const doRestart = useCallback(() => api('/api/restart','Restarting from stage 1'), [api])
-  const doRetry   = useCallback(() => api('/api/retry',  'Retrying current stage'),  [api])
+  const doRestart = useCallback(() => api('/api/restart','Restarting pipeline'), [api])
+  const doRetry   = useCallback(() => api('/api/retry',  'Retrying stage'),     [api])
   const doQuit    = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety OFF' : 'Hand safety ON'), [api, handDetect])
 
@@ -444,15 +271,11 @@ function App() {
     try {
       const body: { score: string; tags?: string[] } = { score: fbScore }
       if (fbScore === 'down' && fbTags.length) body.tags = fbTags
-      const r = await fetch('/api/feedback', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      })
+      const r = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       if (r.ok) toast('Feedback submitted', 'success')
     } catch { /* noop */ }
     setShowFeedback(false); setFbScore(null); setFbTags([])
   }, [fbScore, fbTags, toast])
-
-  /* ── WebSocket ── */
 
   useEffect(() => {
     let backoff = 1000
@@ -467,7 +290,7 @@ function App() {
           if (d.state) setState(prev => {
             if (d.state === 'DONE' && prev !== 'DONE') setTimeout(() => setShowFeedback(true), 500)
             return d.state
-            })
+          })
           if (d.step !== undefined)     setStep(d.step)
           if (d.progress !== undefined) setProgress(Math.max(0, Math.min(100, d.progress)))
           if (d.message !== undefined)  setMessage(d.message)
@@ -485,377 +308,389 @@ function App() {
         reconnRef.current = window.setTimeout(() => { backoff = Math.min(backoff * 1.5, 5000); connect() }, backoff)
       }
       ws.onerror = () => ws.close()
-      }
+    }
     connect()
     return () => { reconnRef.current && clearTimeout(reconnRef.current); wsRef.current?.close() }
   }, [])
 
-  /* ── derived ── */
   const meta       = STATE_META[state]
   const isWarmup   = state === 'WARMUP'
   const canStart   = state === 'READY' || state === 'DONE' || state === 'ERROR'
   const isRunning  = state === 'WORKING'
   const isPaused   = state === 'PAUSED' || state === 'HOMED'
   const hasProcess = isRunning || isPaused
-  // @ts-ignore
-  const canMoveToPoint = state === 'READY' || state === 'HOMED' || state === 'DONE' || state === 'PAUSED' || state === 'WORKING'
 
   /* ================================================================
      Render
      ================================================================ */
   return (
-    <div className="w-full min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+    <div className="w-full h-screen overflow-hidden bg-[#0a0a0a] text-white flex flex-col select-none bg-grid noise-overlay scanlines">
+      <div className="fixed inset-0 bg-spotlight pointer-events-none" />
+      <FloatingParticles />
 
-      {/* ── Header ── */}
-      <header className="w-full px-4 md:px-6 py-3 flex items-center justify-between border-b border-gray-800/60">
-        <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-gray-100">🤖 LeRobot Control</h1>
-        <div className="flex items-center gap-3">
-          <span className={`h-3 w-3 md:h-4 md:w-4 rounded-full ${connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-          <span className="text-sm md:text-base text-gray-400 font-medium">
-            {connected ? 'Online' : reconnecting ? 'Reconnecting…' : 'Offline'}
-          </span>
+      {/* ═══ HEADER ═══ */}
+      <header className={`relative z-10 w-full px-4 lg:px-6 h-11 flex items-center justify-between
+                          border-b border-white/[0.04] backdrop-blur-md flex-shrink-0
+                          transition-all duration-500 ${mounted ? 'opacity-100' : 'opacity-0 -translate-y-2'}`}>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-md bg-[#d2ff00] flex items-center justify-center">
+            <span className="text-sm font-black text-black leading-none">R</span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-heading text-base tracking-[0.2em] text-white/90">RETABLE</span>
+            <span className="font-heading text-base tracking-[0.2em] text-[#d2ff00]">BOT</span>
+          </div>
+        </div>
+        <div className={`flex items-center gap-1.5 text-[9px] font-heading tracking-[0.2em] ${
+          connected ? 'text-emerald-400' : 'text-red-400'
+        }`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-400 shadow-sm shadow-emerald-400/50' : 'bg-red-400'}`} />
+          {connected ? 'ONLINE' : reconnecting ? 'RECONNECTING' : 'OFFLINE'}
         </div>
       </header>
 
-      {/* ── Main — two-column on large screens ── */}
-      <main className="flex-1 flex flex-col lg:flex-row w-full px-4 md:px-6 py-4 md:py-6 gap-4 lg:gap-5">
+      {/* ═══ MAIN ═══ */}
+      <main className={`relative z-10 flex-1 flex flex-col lg:flex-row w-full px-4 lg:px-6 py-3 gap-4 lg:gap-5
+                        max-w-[1600px] mx-auto overflow-hidden min-h-0
+                        transition-all duration-500 ${mounted ? 'opacity-100' : 'opacity-0'}`}>
 
-        {/* ════════════ Left Column: Main Controls ════════════ */}
-        <div className="flex-1 flex flex-col items-center min-w-0">
+        {/* ═══ LEFT COLUMN ═══ */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 max-w-2xl mx-auto lg:mx-0 w-full overflow-y-auto custom-scroll">
 
-        {/* ─── State Orb ─── */}
-        <div className="flex flex-col items-center mb-4 md:mb-6">
-          <div className={`relative w-28 h-28 md:w-36 md:h-36 lg:w-40 lg:h-40 rounded-full flex items-center justify-center
-                          ring-4 md:ring-[5px] ${meta.ring} ${meta.bg} shadow-2xl ${meta.glow}
-                          transition-all duration-500
-                          ${isRunning || isWarmup ? 'animate-pulse' : ''}`}>
-            {/* spinning ring for WORKING or WARMUP */}
-            {(isRunning || isWarmup) && (
-              <div className={`absolute inset-[-6px] md:inset-[-8px] rounded-full border-[3px] border-transparent animate-spin
-                ${isWarmup ? 'border-t-cyan-400' : 'border-t-blue-400'}`} />
-            )}
-            <span className="text-5xl md:text-6xl lg:text-7xl">{meta.icon}</span>
-        </div>
-          <p className={`mt-3 md:mt-4 text-xl md:text-2xl lg:text-3xl font-extrabold tracking-wide ${meta.text}`}>
-            {autoStopped && isPaused ? '🖐️ Hand Stop' : meta.label}
-          </p>
-        </div>
-
-        {/* ─── Pipeline Stage Indicator ─── */}
-        {pipelineTotal > 0 && (
-          <div className="w-full mb-3 md:mb-4">
-            <div className="bg-gray-800/60 backdrop-blur rounded-2xl p-3 md:p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs md:text-sm uppercase tracking-wider text-gray-500 font-medium">Pipeline</span>
-                {pipelineStage && (
-                  <span className={`text-xs md:text-sm font-bold px-2.5 py-1 rounded-lg ${
-                    pipelineStatus === 'inference' ? 'bg-blue-500/20 text-blue-400' :
-                    pipelineStatus === 'waypoints' ? 'bg-violet-500/20 text-violet-400' :
-                    pipelineStatus === 'loading'   ? 'bg-cyan-500/20 text-cyan-400' :
-                    'bg-gray-700 text-gray-400'
-                  }`}>
-                    {pipelineStatus === 'inference' ? '⚡ Inference' :
-                     pipelineStatus === 'waypoints' ? '📍 Waypoints' :
-                     pipelineStatus === 'loading'   ? '🔄 Loading' : ''}
-                  </span>
-                )}
+          {/* ─── HERO STATE ─── */}
+          <div className="relative mb-3 lg:mb-4 flex-shrink-0">
+            <div className="relative overflow-hidden">
+              <h2 className={`font-heading leading-[0.85] tracking-[0.04em] transition-colors duration-500 ${meta.textGlow}`}
+                style={{
+                  color: meta.color,
+                  fontSize: 'clamp(3.5rem, 8vw, 7rem)',
+                  textShadow: `0 0 40px ${meta.color}40, 0 0 80px ${meta.color}15`,
+                }}>
+                {autoStopped && isPaused ? 'HAND\nSTOP' : meta.label}
+              </h2>
+              <div className="h-[3px] mt-1 rounded-full overflow-hidden" style={{ background: `${meta.color}15` }}>
+                <div className={`h-full rounded-full transition-all duration-1000 ${
+                  (isRunning || isWarmup) ? 'animate-shimmer-bar' : ''
+                }`} style={{
+                  width: (isRunning || isWarmup) ? '100%' : '40%',
+                  background: `linear-gradient(90deg, transparent, ${meta.color}, transparent)`,
+                }} />
               </div>
-              {/* Stage steps */}
-              <div className="flex items-center gap-2">
+            </div>
+            <div className="flex items-center gap-3 mt-2">
+              <span className="text-[10px] font-mono tracking-[0.25em] text-slate-600">{meta.sub}</span>
+              {step && (
+                <>
+                  <span className="text-slate-700">·</span>
+                  <span className="text-[10px] font-mono tracking-wider text-slate-500">{step}</span>
+                </>
+              )}
+            </div>
+            {message && (
+              <p className="text-[11px] text-slate-500 mt-1 font-mono leading-relaxed">{message}</p>
+            )}
+          </div>
+
+          {/* ─── PROGRESS ─── */}
+          <div className="mb-3 flex-shrink-0">
+            <div className="flex items-baseline justify-between mb-1">
+              <span className="text-[9px] font-heading tracking-[0.4em] text-slate-600">{isWarmup ? 'LOADING' : 'PROGRESS'}</span>
+              <span className="font-heading text-2xl lg:text-3xl tracking-wider" style={{ color: meta.color }}>
+                {progress}<span className="text-sm text-slate-600">%</span>
+              </span>
+            </div>
+            <div className="h-3 bg-white/[0.03] rounded-sm overflow-hidden border border-white/[0.04]">
+              <div className={`h-full transition-all duration-700 ease-out relative ${
+                (isRunning || isWarmup) ? 'progress-glow' : ''
+              }`}
+                style={{
+                  width: `${progress}%`,
+                  background: `linear-gradient(90deg, ${meta.color}cc, ${meta.color})`,
+                  boxShadow: `0 0 20px ${meta.color}40`,
+                }}>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer" />
+              </div>
+            </div>
+          </div>
+
+          {/* ─── PIPELINE ─── */}
+          {pipelineTotal > 0 && (
+            <div className="flex items-center gap-2 mb-3 flex-shrink-0">
+              <span className="text-[9px] font-heading tracking-[0.3em] text-slate-600 flex-shrink-0">PIPELINE</span>
+              <div className="flex items-center gap-1 flex-1">
                 {Array.from({ length: pipelineTotal }, (_, i) => {
                   const isActive = i === pipelineStageIdx && (isRunning || pipelineStatus !== '')
                   const isDone = i < pipelineStageIdx || state === 'DONE'
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
-                      <div className={`w-full h-2 rounded-full transition-all duration-500 ${
-                        isDone ? 'bg-emerald-500' :
-                        isActive ? (pipelineStatus === 'waypoints' ? 'bg-violet-500 animate-pulse' : 'bg-blue-500 animate-pulse') :
-                        'bg-gray-700'
+                    <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+                      <div className={`w-full h-1 rounded-full transition-all duration-500 ${
+                        isDone ? 'bg-[#d2ff00]' : isActive ? 'bg-[#00f0ff] progress-glow' : 'bg-white/[0.06]'
                       }`} />
-                      <span className={`text-[10px] md:text-xs font-semibold truncate max-w-full ${
-                        isDone ? 'text-emerald-400' :
-                        isActive ? 'text-blue-400' :
-                        'text-gray-600'
+                      <span className={`text-[7px] font-mono truncate max-w-full ${
+                        isDone ? 'text-[#d2ff00]/60' : isActive ? 'text-[#00f0ff]/60' : 'text-slate-800'
                       }`}>
-                        {/* Show stage name from step field if available */}
-                        {i === pipelineStageIdx && pipelineStage ? pipelineStage : `Stage ${i + 1}`}
+                        {i === pipelineStageIdx && pipelineStage ? pipelineStage : ''}
                       </span>
                     </div>
                   )
                 })}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* ─── Status Info Card ─── */}
-        <div className="w-full bg-gray-800/60 backdrop-blur rounded-2xl p-4 md:p-5 space-y-3 mb-4 md:mb-6">
-          {step && (
-            <div className="flex items-center justify-between">
-              <span className="text-sm md:text-base uppercase tracking-wider text-gray-500 font-medium">Step</span>
-              <span className="text-base md:text-lg font-semibold text-gray-200">{step}</span>
+              {pipelineStatus && (
+                <span className={`text-[8px] font-heading tracking-[0.2em] px-2 py-0.5 rounded border flex-shrink-0 ${
+                  pipelineStatus === 'inference' ? 'border-blue-500/30 text-blue-400' :
+                  pipelineStatus === 'waypoints' ? 'border-violet-500/30 text-violet-400' :
+                  'border-cyan-500/30 text-cyan-400'
+                }`}>
+                  {pipelineStatus.toUpperCase()}
+                </span>
+              )}
             </div>
           )}
-          {message && (
-            <p className="text-base md:text-lg text-gray-300 text-center leading-relaxed">{message}</p>
-          )}
-          <div>
-            <div className="flex justify-between text-sm md:text-base text-gray-500 mb-2 font-medium">
-              <span>{isWarmup ? 'Loading' : 'Progress'}</span>
-              <span>{progress}%</span>
-            </div>
-            <div className="h-3 md:h-4 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  state === 'WARMUP' ? 'bg-cyan-500' :
-                  state === 'DONE'   ? 'bg-emerald-500' :
-                  state === 'ERROR'  ? 'bg-red-500' :
-                  state === 'PAUSED' ? 'bg-amber-500' :
-                  'bg-blue-500'
-                }`}
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-        </div>
 
-        {/* ─── Hand Safety Bar ─── */}
-        <div className="w-full mb-3 md:mb-4">
-          <div className={`flex items-center justify-between rounded-2xl px-5 py-4 md:px-6 md:py-5 transition-all duration-300
-                          ${handDetected
-                            ? 'bg-red-600/20 ring-2 ring-red-500/60'
-                            : handDetect
-                              ? 'bg-emerald-600/10 ring-1 ring-emerald-500/30'
-                              : 'bg-gray-800/60 ring-1 ring-gray-700/50'}`}>
-            <div className="flex items-center gap-3">
-              {/* Status indicator */}
-              <div className={`relative flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full
-                              ${handDetected
-                                ? 'bg-red-500/30'
-                                : handDetect
-                                  ? 'bg-emerald-500/20'
-                                  : 'bg-gray-700/50'}`}>
-                <span className="text-xl md:text-2xl">{handDetected ? '🖐️' : handDetect ? '🛡️' : '🚫'}</span>
-                {handDetected && (
-                  <span className="absolute -top-0.5 -right-0.5 h-3 w-3 md:h-4 md:w-4 rounded-full bg-red-500 animate-ping" />
+          {/* ─── HAND SAFETY ─── */}
+          <div className={`flex items-center justify-between py-2 px-3 rounded-lg mb-3 flex-shrink-0 transition-all duration-300 border ${
+            handDetected
+              ? 'border-red-500/50 bg-red-500/[0.06] glow-red'
+              : handDetect
+                ? 'border-emerald-500/15 bg-emerald-500/[0.03]'
+                : 'border-white/[0.04] bg-white/[0.01]'
+          }`}>
+            <div className="flex items-center gap-2">
+              <IconHand size={18} color={handDetected ? '#ef4444' : handDetect ? '#10b981' : '#555'} />
+              <span className={`text-[10px] font-heading tracking-[0.15em] ${
+                handDetected ? 'text-red-400' : handDetect ? 'text-emerald-400/80' : 'text-slate-600'
+              }`}>
+                {handDetected ? 'HAND DETECTED — STOPPED' : handDetect ? 'HAND SAFETY ACTIVE' : 'HAND SAFETY OFF'}
+              </span>
+              {handDetected && <span className="h-2 w-2 rounded-full bg-red-500 animate-ping" />}
+            </div>
+            <button onClick={doToggleHand} disabled={isWarmup}
+              className={`relative w-10 h-5 rounded-full transition-all duration-300 flex-shrink-0
+                         ${isWarmup ? 'opacity-30 cursor-not-allowed' : handDetect ? 'bg-emerald-500' : 'bg-slate-700'}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-300
+                              ${handDetect ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
+          {/* ─── Mobile Camera Feeds ─── */}
+          <div className="lg:hidden flex-shrink-0">
+            <MobileCameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
+          </div>
+
+          {/* ═══════════════════════════════════════════════════════
+             ACTION PANEL — redesigned with bold layout
+             ═══════════════════════════════════════════════════════ */}
+          <div className="flex-1 flex flex-col min-h-0">
+
+            {/* Warmup state */}
+            {isWarmup && (
+              <div className="flex items-center justify-center gap-3 py-4 rounded-xl border border-[#00f0ff]/10 bg-[#00f0ff]/[0.02] neon-border-animated mb-3">
+                <div className="w-5 h-5 border-2 border-[#00f0ff] border-t-transparent rounded-full animate-smooth-spin" />
+                <span className="text-sm font-heading tracking-[0.15em] text-slate-500">LOADING MODEL…</span>
+              </div>
+            )}
+
+            {/* ── Primary Action — the hero button ── */}
+            {canStart && (
+              <div className="mb-3">
+                <button onClick={doStart}
+                  className="group w-full py-5 lg:py-6 rounded-xl font-heading font-black text-xl lg:text-2xl tracking-[0.2em]
+                             bg-[#d2ff00] text-black hover:bg-[#e5ff4d]
+                             shadow-[0_0_40px_rgba(210,255,0,0.2)] hover:shadow-[0_0_60px_rgba(210,255,0,0.4)]
+                             transition-all duration-200 btn-press relative overflow-hidden">
+                  <span className="relative z-10 flex items-center justify-center gap-3">
+                    <IconPlay size={24} />
+                    START INFERENCE
+                  </span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                </button>
+              </div>
+            )}
+
+            {isPaused && (
+              <div className="mb-3">
+                <button onClick={doResume}
+                  className="group w-full py-5 lg:py-6 rounded-xl font-heading font-black text-xl lg:text-2xl tracking-[0.2em]
+                             bg-blue-500 text-white hover:bg-blue-400
+                             shadow-[0_0_40px_rgba(59,130,246,0.25)] hover:shadow-[0_0_60px_rgba(59,130,246,0.4)]
+                             transition-all duration-200 btn-press relative overflow-hidden">
+                  <span className="relative z-10 flex items-center justify-center gap-3">
+                    <IconPlay size={24} className="text-white" />
+                    RESUME
+                  </span>
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                </button>
+              </div>
+            )}
+
+            {/* ── Secondary Actions — icon-driven grid ── */}
+            {(canStart || isPaused || hasProcess) && (
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {/* Home */}
+                <button onClick={doHome} disabled={isWarmup}
+                  className="action-tile group"
+                  style={{ '--tile-color': '#d2ff00' } as React.CSSProperties}>
+                  <IconHome size={20} className="text-[#d2ff00]/60 group-hover:text-[#d2ff00] transition-colors" />
+                  <span className="text-[9px] font-heading tracking-[0.2em] text-[#d2ff00]/50 group-hover:text-[#d2ff00]/90 transition-colors">HOME</span>
+                </button>
+
+                {/* Restart — only when paused */}
+                {isPaused ? (
+                  <button onClick={doRestart}
+                    className="action-tile group"
+                    style={{ '--tile-color': '#f97316' } as React.CSSProperties}>
+                    <IconRefresh size={18} className="text-orange-400/60 group-hover:text-orange-400 transition-colors" />
+                    <span className="text-[9px] font-heading tracking-[0.2em] text-orange-400/50 group-hover:text-orange-400/90 transition-colors">RESTART</span>
+                  </button>
+                ) : (
+                  <div className="action-tile-disabled">
+                    <IconRefresh size={18} className="text-slate-800" />
+                    <span className="text-[9px] font-heading tracking-[0.2em] text-slate-800">RESTART</span>
+                  </div>
+                )}
+
+                {/* Retry — only when paused */}
+                {isPaused ? (
+                  <button onClick={doRetry}
+                    className="action-tile group"
+                    style={{ '--tile-color': '#00f0ff' } as React.CSSProperties}>
+                    <IconZap size={18} className="text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
+                    <span className="text-[9px] font-heading tracking-[0.2em] text-cyan-400/50 group-hover:text-cyan-400/90 transition-colors">RETRY</span>
+                  </button>
+                ) : (
+                  <div className="action-tile-disabled">
+                    <IconZap size={18} className="text-slate-800" />
+                    <span className="text-[9px] font-heading tracking-[0.2em] text-slate-800">RETRY</span>
+                  </div>
                 )}
               </div>
-              <div>
-                <p className={`text-sm md:text-base font-bold ${
-                  handDetected ? 'text-red-400' : handDetect ? 'text-emerald-400' : 'text-gray-500'
-                }`}>
-                  {handDetected ? '🖐️ Hand Detected — Auto Stopped!' :
-                   handDetect ? 'Hand Safety Active' : 'Hand Safety Off'}
-                </p>
-                <p className="text-xs md:text-sm text-gray-500">
-                  {handDetect
-                    ? 'Auto e-stop if a human hand enters the front camera'
-                    : 'Manual control only — tap to enable'}
-                </p>
-              </div>
-            </div>
-            {/* Toggle button */}
-            <button
-              onClick={doToggleHand}
-              disabled={isWarmup}
-              className={`relative w-14 h-8 md:w-16 md:h-9 rounded-full transition-all duration-300 flex-shrink-0
-                         ${isWarmup ? 'opacity-40 cursor-not-allowed' :
-                           handDetect
-                             ? 'bg-emerald-500 hover:bg-emerald-400'
-                             : 'bg-gray-600 hover:bg-gray-500'}`}
-            >
-              <div className={`absolute top-1 w-6 h-6 md:w-7 md:h-7 rounded-full bg-white shadow-md transition-transform duration-300
-                              ${handDetect ? 'translate-x-7 md:translate-x-8' : 'translate-x-1'}`} />
-            </button>
-          </div>
-        </div>
+            )}
 
-        {/* ─── Camera Feeds (shown inline on small screens only, right column on lg+) ─── */}
-        <div className="lg:hidden">
-        <CameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
-        </div>
-
-        {/* ─── Action Buttons ─── */}
-        <div className="w-full space-y-3 md:space-y-4">
-
-          {/* Warmup indicator */}
-          {isWarmup && (
-            <div className="w-full py-6 md:py-8 rounded-2xl text-xl md:text-2xl lg:text-3xl font-bold text-center
-                           bg-gray-800 text-gray-500 cursor-default ring-1 ring-gray-700">
-              ⏳&ensp;Loading model & connecting robot...
-            </div>
-          )}
-
-          {/* Primary: Start */}
-          {canStart && (
-            <>
-            <button
-              onClick={doStart}
-              className="w-full py-6 md:py-8 rounded-2xl text-xl md:text-2xl lg:text-3xl font-bold
-                         bg-gradient-to-r from-emerald-600 to-emerald-500
-                         hover:from-emerald-500 hover:to-emerald-400
-                         active:from-emerald-700 active:to-emerald-600
-                         shadow-xl shadow-emerald-500/25 transition-all duration-200"
-            >
-              ▶&ensp;Start Inference
-            </button>
-            {/* Home button available before starting */}
-            <button
-              onClick={doHome}
-              className="w-full py-4 md:py-5 rounded-2xl text-lg md:text-xl font-bold
-                         bg-violet-600/80 hover:bg-violet-500 active:bg-violet-700
-                         transition-colors duration-150"
-            >
-              🏠&ensp;Reset to Home
-            </button>
-            </>
-          )}
-
-          {/* Primary: Resume */}
-          {isPaused && (
-            <button
-              onClick={doResume}
-              className="w-full py-6 md:py-8 rounded-2xl text-xl md:text-2xl lg:text-3xl font-bold
-                         bg-gradient-to-r from-blue-600 to-blue-500
-                         hover:from-blue-500 hover:to-blue-400
-                         active:from-blue-700 active:to-blue-600
-                         shadow-xl shadow-blue-500/25 transition-all duration-200"
-            >
-              ▶&ensp;Resume Inference
-            </button>
-          )}
-
-          {/* Restart + Retry (visible when paused/homed) */}
-          {isPaused && (
-            <div className="flex gap-4">
-              <button
-                onClick={doRestart}
-                className="flex-1 py-4 md:py-5 rounded-2xl text-base md:text-lg font-bold
-                           bg-orange-600/80 hover:bg-orange-500 active:bg-orange-700
-                           transition-colors duration-150"
-              >
-                🔄&ensp;Restart
+            {/* Quit — subtle, only when process active */}
+            {hasProcess && (
+              <button onClick={doQuit}
+                className="w-full py-1.5 text-[10px] font-heading tracking-[0.25em] text-slate-700 hover:text-slate-500
+                           transition-colors duration-200 mb-2 flex-shrink-0">
+                <span className="flex items-center justify-center gap-1.5">
+                  <IconX size={12} />
+                  QUIT SESSION
+                </span>
               </button>
+            )}
+
+            {/* Spacer */}
+            <div className="flex-1 min-h-1" />
+
+            {/* ═══ EMERGENCY STOP — always anchored at bottom ═══ */}
+            <div className="w-full flex-shrink-0 pt-2">
               <button
-                onClick={doRetry}
-                className="flex-1 py-4 md:py-5 rounded-2xl text-base md:text-lg font-bold
-                           bg-cyan-600/80 hover:bg-cyan-500 active:bg-cyan-700
-                           transition-colors duration-150"
-              >
-                🔁&ensp;Retry
+                onClick={hasProcess ? doStop : undefined}
+                disabled={!hasProcess}
+                className={`w-full rounded-xl font-heading font-black transition-all duration-200 select-none btn-press
+                            ${hasProcess
+                              ? `py-5 lg:py-7 text-2xl lg:text-3xl tracking-[0.25em]
+                                 bg-gradient-to-b from-red-500 to-red-700 text-white
+                                 border-2 border-red-400/40 hover:border-red-300/60
+                                 estop-active
+                                 shadow-[0_0_50px_rgba(239,68,68,0.3),0_0_100px_rgba(239,68,68,0.1)]
+                                 hover:shadow-[0_0_70px_rgba(239,68,68,0.45),0_0_120px_rgba(239,68,68,0.15)]
+                                 hover:from-red-400 hover:to-red-600
+                                 active:from-red-600 active:to-red-800`
+                              : `py-3 text-xs tracking-[0.2em]
+                                 bg-white/[0.015] text-slate-800 cursor-default border border-white/[0.03]`
+                            }`}>
+                {hasProcess ? (
+                  <span className="flex items-center justify-center gap-3">
+                    <IconStop size={28} />
+                    EMERGENCY STOP
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2 opacity-40">
+                    <IconStop size={14} />
+                    E-STOP
+                  </span>
+                )}
               </button>
             </div>
-          )}
 
-          {/* Secondary: Home + Quit */}
-          {hasProcess && (
-            <div className="flex gap-4">
-              <button
-                onClick={doHome}
-                className="flex-1 py-5 md:py-6 rounded-2xl text-lg md:text-xl lg:text-2xl font-bold
-                           bg-violet-600/80 hover:bg-violet-500 active:bg-violet-700
-                           transition-colors duration-150"
-              >
-                🏠&ensp;Home
-              </button>
-          <button
-                onClick={doQuit}
-                className="flex-1 py-5 md:py-6 rounded-2xl text-lg md:text-xl lg:text-2xl font-bold
-                           bg-gray-700 hover:bg-gray-600 active:bg-gray-800
-                           transition-colors duration-150"
-              >
-                ✕&ensp;Quit
-          </button>
-            </div>
-          )}
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1 min-h-6 md:min-h-10" />
-
-        {/* ─── EMERGENCY STOP ─── */}
-        <div className="w-full">
-          <button
-            onClick={hasProcess ? doStop : undefined}
-            disabled={!hasProcess}
-            className={`w-full rounded-2xl md:rounded-3xl uppercase tracking-[0.15em] font-black
-                        transition-all duration-200 select-none
-                        ${hasProcess
-                          ? 'py-8 md:py-10 text-2xl md:text-3xl lg:text-4xl bg-red-600 hover:bg-red-500 active:bg-red-700 active:scale-[0.98] shadow-2xl shadow-red-600/40 ring-2 ring-red-400/50'
-                          : 'py-6 md:py-8 text-xl md:text-2xl lg:text-3xl bg-gray-800 text-gray-600 cursor-default ring-1 ring-gray-700'
-                        }`}
-          >
-            ⛔&ensp;Emergency Stop
-          </button>
-        </div>
-
+          </div>{/* end action panel */}
         </div>{/* end left column */}
 
-        {/* ════════════ Right Column: Live Camera Feeds ════════════ */}
-        <div className="hidden lg:flex lg:w-[360px] xl:w-[400px] 2xl:w-[440px] flex-shrink-0 min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+        {/* ═══ RIGHT COLUMN ═══ */}
+        <div className={`hidden lg:flex lg:w-[340px] xl:w-[380px] 2xl:w-[420px] flex-shrink-0 min-w-0 flex-col gap-2.5
+                        overflow-y-auto transition-all duration-500 delay-150
+                        ${mounted ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-6'}`}>
           <SidebarCameraFeeds active={!isWarmup && state !== 'ERROR'} handDetected={handDetected} handDetectEnabled={handDetect} />
         </div>
 
       </main>
 
-      {/* ── Toasts ── */}
-      <div className="fixed top-5 left-1/2 -translate-x-1/2 flex flex-col gap-3 pointer-events-none z-50 w-[90vw] max-w-lg">
+      {/* ═══ TOASTS ═══ */}
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 flex flex-col gap-1.5 pointer-events-none z-50 w-[90vw] max-w-xs">
         {toasts.map(t => (
           <div key={t.id}
-            className={`px-5 py-4 rounded-xl text-base md:text-lg font-medium text-center shadow-lg backdrop-blur
-              ${t.type === 'success' ? 'bg-emerald-600/90' :
-                t.type === 'error'   ? 'bg-red-600/90' :
-                                       'bg-blue-600/90'}`}
-          >
+            className={`px-4 py-2 rounded-md text-[10px] font-heading tracking-[0.15em] text-center
+                        shadow-xl backdrop-blur-md border animate-fadeInUp
+              ${t.type === 'success' ? 'bg-emerald-600/90 border-emerald-400/20 text-white' :
+                t.type === 'error'   ? 'bg-red-600/90 border-red-400/20 text-white' :
+                                       'bg-blue-600/90 border-blue-400/20 text-white'}`}>
             {t.message}
           </div>
         ))}
       </div>
 
-      {/* ── Feedback Modal ── */}
+      {/* ═══ FEEDBACK MODAL ═══ */}
       {showFeedback && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6 z-50">
-          <div className="bg-gray-800 rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl">
-            <h2 className="text-2xl md:text-3xl font-bold text-center">How did it go?</h2>
-            <div className="flex justify-center gap-8">
-              <button
-                onClick={() => setFbScore('up')}
-                className={`text-6xl md:text-7xl p-5 md:p-6 rounded-2xl transition-all ${
-                  fbScore === 'up' ? 'bg-emerald-600 scale-110' : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-              >👍</button>
-              <button
-                onClick={() => setFbScore('down')}
-                className={`text-6xl md:text-7xl p-5 md:p-6 rounded-2xl transition-all ${
-                  fbScore === 'down' ? 'bg-red-600 scale-110' : 'bg-gray-700 hover:bg-gray-600'
-                }`}
-              >👎</button>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 z-50">
+          <div className="bg-[#0a0a0a] rounded-xl p-6 w-full max-w-sm border border-white/[0.06] animate-scaleIn"
+            style={{ boxShadow: '0 0 80px rgba(210,255,0,0.05)' }}>
+            <h2 className="font-heading text-3xl text-center tracking-[0.15em] mb-5 gradient-text">
+              HOW DID IT GO?
+            </h2>
+            <div className="flex justify-center gap-4 mb-5">
+              <button onClick={() => setFbScore('up')}
+                className={`w-20 h-20 rounded-xl text-4xl flex items-center justify-center transition-all duration-200 border ${
+                  fbScore === 'up'
+                    ? 'bg-emerald-500/20 border-emerald-500/50 scale-105 shadow-[0_0_30px_rgba(16,185,129,0.2)]'
+                    : 'bg-white/[0.02] border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/[0.05]'
+                }`}>👍</button>
+              <button onClick={() => setFbScore('down')}
+                className={`w-20 h-20 rounded-xl text-4xl flex items-center justify-center transition-all duration-200 border ${
+                  fbScore === 'down'
+                    ? 'bg-red-500/20 border-red-500/50 scale-105 shadow-[0_0_30px_rgba(239,68,68,0.2)]'
+                    : 'bg-white/[0.02] border-white/[0.06] hover:border-red-500/30 hover:bg-red-500/[0.05]'
+                }`}>👎</button>
             </div>
             {fbScore === 'down' && (
-              <div className="space-y-3">
-                <p className="text-sm md:text-base text-gray-400 text-center uppercase tracking-wide">What went wrong?</p>
-                <div className="flex flex-wrap gap-2 justify-center">
+              <div className="mb-4 animate-fadeInUp">
+                <p className="text-[9px] font-heading text-slate-600 text-center tracking-[0.3em] mb-2">WHAT WENT WRONG?</p>
+                <div className="flex flex-wrap gap-1.5 justify-center">
                   {FEEDBACK_TAGS.map(tag => (
                     <button key={tag}
                       onClick={() => setFbTags(p => p.includes(tag) ? p.filter(t => t !== tag) : [...p, tag])}
-                      className={`px-4 py-2 rounded-lg text-sm md:text-base font-medium transition-colors ${
-                        fbTags.includes(tag) ? 'bg-red-600' : 'bg-gray-700 hover:bg-gray-600'
-                      }`}
-                    >{tag}</button>
+                      className={`px-2 py-1 rounded text-[9px] font-mono transition-all border ${
+                        fbTags.includes(tag)
+                          ? 'bg-red-500/15 border-red-500/30 text-red-300'
+                          : 'bg-white/[0.02] border-white/[0.06] text-slate-500 hover:border-white/[0.12]'
+                      }`}>{tag}</button>
                   ))}
                 </div>
               </div>
             )}
-            <div className="flex gap-4 pt-2">
+            <div className="flex gap-2">
               <button onClick={() => { setShowFeedback(false); setFbScore(null); setFbTags([]) }}
-                className="flex-1 py-4 rounded-xl bg-gray-700 hover:bg-gray-600 font-semibold text-base md:text-lg">
-                Skip
+                className="flex-1 py-2.5 rounded-lg text-[10px] font-heading tracking-[0.15em]
+                           text-slate-500 border border-white/[0.06] hover:border-white/[0.12] hover:text-slate-300
+                           transition-all btn-press">
+                SKIP
               </button>
               <button onClick={submitFeedback} disabled={!fbScore}
-                className={`flex-1 py-4 rounded-xl font-semibold text-base md:text-lg transition-colors ${
-                  fbScore ? 'bg-blue-600 hover:bg-blue-500' : 'bg-gray-700 opacity-40 cursor-not-allowed'
+                className={`flex-1 py-2.5 rounded-lg text-[10px] font-heading tracking-[0.15em] transition-all btn-press ${
+                  fbScore
+                    ? 'bg-[#d2ff00] text-black font-bold hover:bg-[#e5ff4d] shadow-[0_0_20px_rgba(210,255,0,0.15)]'
+                    : 'bg-white/[0.02] border border-white/[0.06] text-slate-700 cursor-not-allowed'
                 }`}>
-                Submit
+                SUBMIT
               </button>
             </div>
           </div>

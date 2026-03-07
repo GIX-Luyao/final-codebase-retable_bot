@@ -25,6 +25,7 @@ Usage:
 import asyncio
 import glob
 import json
+import logging
 import os
 import re
 import signal
@@ -39,6 +40,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "config.py"
@@ -107,11 +115,12 @@ def _stop_serve_worker() -> None:
         try:
             _serve_process.terminate()
             _serve_process.wait(timeout=5)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error terminating serve worker: {e}")
             try:
                 _serve_process.kill()
-            except Exception:
-                pass
+            except Exception as e2:
+                logger.warning(f"Error killing serve worker: {e2}")
         _serve_process = None
         _serve_devices = []
 
@@ -149,7 +158,8 @@ def _read_served_meta(device: str) -> dict | None:
     try:
         with open(meta_path) as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Could not read metadata for {device}: {e}")
         return None
 
 
@@ -182,12 +192,25 @@ def _worker_detect_cameras() -> list[dict[str, Any]]:
     )
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
+        stdout = result.stdout.decode(errors="replace").strip()
+        logger.error(f"Camera detection failed (returncode={result.returncode})")
+        logger.error(f"stderr: {stderr}")
+        if stdout:
+            logger.error(f"stdout: {stdout}")
         raise RuntimeError(f"Camera detection failed: {stderr}")
 
     stdout = result.stdout.decode(errors="replace").strip()
     if not stdout:
+        logger.warning("Camera detection returned empty output")
         return []
-    return json.loads(stdout)
+    try:
+        cameras = json.loads(stdout)
+        logger.info(f"Detected {len(cameras)} cameras")
+        return cameras
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse camera detection output: {e}")
+        logger.error(f"Output was: {stdout[:200]}...")
+        raise RuntimeError(f"Invalid JSON from camera detection: {e}")
 
 
 def _worker_capture_snapshot_oneshot(device: str) -> bytes:
@@ -200,14 +223,17 @@ def _worker_capture_snapshot_oneshot(device: str) -> bytes:
             env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
         )
     except subprocess.TimeoutExpired:
+        logger.error(f"Snapshot timeout for {device} after {SNAPSHOT_TIMEOUT}s")
         raise RuntimeError(f"Snapshot timeout for {device} after {SNAPSHOT_TIMEOUT}s.")
     
     if result.returncode != 0:
         stderr = result.stderr.decode(errors="replace").strip()
+        logger.error(f"Snapshot failed for {device} (returncode={result.returncode}): {stderr}")
         raise RuntimeError(f"Snapshot failed for {device}: {stderr}")
 
     jpeg_bytes = result.stdout
     if not jpeg_bytes:
+        logger.error(f"Empty snapshot from {device}")
         raise RuntimeError(f"Empty snapshot from {device}")
 
     return jpeg_bytes
@@ -265,12 +291,12 @@ def _read_current_config() -> dict[str, Any]:
     # Try top-level CAMERAS = "..." first, then fall back to dict style
     m = re.search(r'^CAMERAS\s*=\s*"([^"]*)"', content, re.MULTILINE)
     if not m:
-    m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
+        m = re.search(r'"cameras"\s*:\s*"([^"]*)"', content)
     cameras_str = m.group(1) if m else ""
 
     m2 = re.search(r'^ROBOT_PORT\s*=\s*"([^"]*)"', content, re.MULTILINE)
     if not m2:
-    m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
+        m2 = re.search(r'"robot_port"\s*:\s*"([^"]*)"', content)
     robot_port = m2.group(1) if m2 else ""
 
     camera_map = {}
@@ -308,11 +334,11 @@ def _save_config(cameras_str: str, robot_port: str | None = None) -> None:
             flags=re.MULTILINE,
         )
     else:
-    content = re.sub(
-        r'("cameras"\s*:\s*)"([^"]*)"',
-        f'\\1"{cameras_str}"',
-        content,
-    )
+        content = re.sub(
+            r'("cameras"\s*:\s*)"([^"]*)"',
+            f'\\1"{cameras_str}"',
+            content,
+        )
 
     if robot_port:
         if re.search(r'^ROBOT_PORT\s*=\s*"', content, re.MULTILINE):
@@ -323,11 +349,11 @@ def _save_config(cameras_str: str, robot_port: str | None = None) -> None:
                 flags=re.MULTILINE,
             )
         else:
-        content = re.sub(
-            r'("robot_port"\s*:\s*)"([^"]*)"',
-            f'\\1"{robot_port}"',
-            content,
-        )
+            content = re.sub(
+                r'("robot_port"\s*:\s*)"([^"]*)"',
+                f'\\1"{robot_port}"',
+                content,
+            )
 
     CONFIG_PATH.write_text(content)
 
@@ -357,6 +383,7 @@ async def detect_cameras():
     try:
         cameras = await loop.run_in_executor(None, _worker_detect_cameras)
     except Exception as e:
+        logger.error(f"Camera detection failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
     # Start persistent serve worker for all detected devices
@@ -383,10 +410,12 @@ async def get_snapshot(device_path: str):
         jpeg_bytes = await loop.run_in_executor(None, _get_snapshot, device)
     except RuntimeError as e:
         error_msg = str(e)
+        logger.warning(f"Snapshot error for {device}: {error_msg}")
         if "timeout" in error_msg.lower():
             raise HTTPException(status_code=408, detail=error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
     except Exception as e:
+        logger.error(f"Unexpected snapshot error for {device}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
     return Response(content=jpeg_bytes, media_type="image/jpeg")
@@ -416,6 +445,7 @@ async def save_config(req: SaveConfigRequest):
     try:
         _save_config(cameras_str, req.robot_port)
     except Exception as e:
+        logger.error(f"Failed to save config: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to save config: {e}")
 
     return {
