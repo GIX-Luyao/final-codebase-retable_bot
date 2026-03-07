@@ -31,15 +31,15 @@ interface Toast {
    ================================================================ */
 
 const STATE_META: Record<RobotState, {
-  label: string; sub: string; color: string; glow: string; textGlow: string
+  label: string; color: string; glow: string; textGlow: string
 }> = {
-  WARMUP:  { label: 'WARMING UP',  sub: 'INITIALIZING SYSTEMS',   color: '#00f0ff', glow: 'glow-cyan',   textGlow: 'text-glow-cyan' },
-  READY:   { label: 'READY',       sub: 'AWAITING COMMAND',       color: '#d2ff00', glow: 'glow-neon',   textGlow: 'text-glow-neon' },
-  WORKING: { label: 'RUNNING',     sub: 'INFERENCE IN PROGRESS',  color: '#3b82f6', glow: 'glow-blue',   textGlow: 'text-glow-blue' },
-  PAUSED:  { label: 'STOPPED',     sub: 'EXECUTION HALTED',       color: '#f59e0b', glow: '',            textGlow: '' },
-  HOMED:   { label: 'HOME',        sub: 'HOME POSITION',          color: '#a78bfa', glow: '',            textGlow: '' },
-  DONE:    { label: 'COMPLETE',    sub: 'TASK FINISHED',          color: '#10b981', glow: 'glow-emerald',textGlow: 'text-glow-emerald' },
-  ERROR:   { label: 'ERROR',       sub: 'SOMETHING WENT WRONG',   color: '#ef4444', glow: 'glow-red',   textGlow: 'text-glow-red' },
+  WARMUP:  { label: 'WARMING UP',  color: '#00f0ff', glow: 'glow-cyan',   textGlow: 'text-glow-cyan' },
+  READY:   { label: 'READY',       color: '#d2ff00', glow: 'glow-neon',   textGlow: 'text-glow-neon' },
+  WORKING: { label: 'RUNNING',     color: '#3b82f6', glow: 'glow-blue',   textGlow: 'text-glow-blue' },
+  PAUSED:  { label: 'STOPPED',     color: '#f59e0b', glow: '',            textGlow: '' },
+  HOMED:   { label: 'HOME',        color: '#a78bfa', glow: '',            textGlow: '' },
+  DONE:    { label: 'COMPLETE',    color: '#10b981', glow: 'glow-emerald',textGlow: 'text-glow-emerald' },
+  ERROR:   { label: 'ERROR',       color: '#ef4444', glow: 'glow-red',   textGlow: 'text-glow-red' },
 }
 
 const FEEDBACK_TAGS = [
@@ -365,17 +365,8 @@ function App() {
                 }} />
               </div>
             </div>
-            <div className="flex items-center gap-3 mt-3">
-              <span className="text-base font-mono tracking-[0.25em] text-slate-600">{meta.sub}</span>
-              {step && (
-                <>
-                  <span className="text-slate-700">·</span>
-                  <span className="text-base font-mono tracking-wider text-slate-500">{step}</span>
-                </>
-              )}
-            </div>
-            {message && (
-              <p className="text-base text-slate-500 mt-2 font-mono leading-relaxed">{message}</p>
+            {(isWarmup || state === 'ERROR') && message && (
+              <p className="text-base text-slate-500 mt-3 font-mono leading-relaxed">{message}</p>
             )}
           </div>
 
