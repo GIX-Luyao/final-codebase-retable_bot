@@ -65,11 +65,6 @@ const IconHome: FC<{ size?: number; className?: string }> = ({ size = 18, classN
     <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
   </svg>
 )
-const IconRefresh: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-  </svg>
-)
 const IconX: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={className}>
     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -79,11 +74,6 @@ const IconHand: FC<{ size?: number; color?: string }> = ({ size = 18, color = '#
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" />
     <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-  </svg>
-)
-const IconZap: FC<{ size?: number; className?: string }> = ({ size = 16, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
-    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
   </svg>
 )
 
@@ -261,8 +251,6 @@ function App() {
   const doStop    = useCallback(() => api('/api/stop',   'Emergency stop'),     [api])
   const doHome    = useCallback(() => api('/api/reset',  'Going to home'),      [api])
   const doResume  = useCallback(() => api('/api/resume', 'Resumed'),            [api])
-  const doRestart = useCallback(() => api('/api/restart','Restarting pipeline'), [api])
-  const doRetry   = useCallback(() => api('/api/retry',  'Retrying stage'),     [api])
   const doQuit    = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety OFF' : 'Hand safety ON'), [api, handDetect])
 
@@ -554,46 +542,16 @@ function App() {
               ) : null}
             </div>
 
-            {/* ── Secondary Actions — icon-driven grid ── */}
+            {/* ── Secondary Actions ── */}
             {!isWarmup && (
-              <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="flex gap-3 mb-4">
                 {/* Home */}
                 <button onClick={doHome}
-                  className="action-tile group"
+                  className="action-tile group flex-1"
                   style={{ '--tile-color': '#d2ff00' } as React.CSSProperties}>
                   <IconHome size={28} className="text-[#d2ff00]/60 group-hover:text-[#d2ff00] transition-colors" />
                   <span className="text-sm font-heading tracking-[0.2em] text-[#d2ff00]/50 group-hover:text-[#d2ff00]/90 transition-colors">HOME</span>
                 </button>
-
-                {/* Restart — only when paused */}
-                {isPaused ? (
-                  <button onClick={doRestart}
-                    className="action-tile group"
-                    style={{ '--tile-color': '#f97316' } as React.CSSProperties}>
-                    <IconRefresh size={26} className="text-orange-400/60 group-hover:text-orange-400 transition-colors" />
-                    <span className="text-sm font-heading tracking-[0.2em] text-orange-400/50 group-hover:text-orange-400/90 transition-colors">RESTART</span>
-                  </button>
-                ) : (
-                  <div className="action-tile-disabled">
-                    <IconRefresh size={26} className="text-slate-800" />
-                    <span className="text-sm font-heading tracking-[0.2em] text-slate-800">RESTART</span>
-                  </div>
-                )}
-
-                {/* Retry — only when paused */}
-                {isPaused ? (
-                  <button onClick={doRetry}
-                    className="action-tile group"
-                    style={{ '--tile-color': '#00f0ff' } as React.CSSProperties}>
-                    <IconZap size={26} className="text-cyan-400/60 group-hover:text-cyan-400 transition-colors" />
-                    <span className="text-sm font-heading tracking-[0.2em] text-cyan-400/50 group-hover:text-cyan-400/90 transition-colors">RETRY</span>
-                  </button>
-                ) : (
-                  <div className="action-tile-disabled">
-                    <IconZap size={26} className="text-slate-800" />
-                    <span className="text-sm font-heading tracking-[0.2em] text-slate-800">RETRY</span>
-                  </div>
-                )}
               </div>
             )}
 
