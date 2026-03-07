@@ -388,7 +388,7 @@ function App() {
               </div>
               <div className="flex items-stretch gap-2">
                 {Array.from({ length: pipelineTotal }, (_, i) => {
-                  const isActive = i === pipelineStageIdx && (isRunning || pipelineStatus !== '')
+                  const isActive = i === pipelineStageIdx && !isWarmup && (isRunning || pipelineStatus !== '')
                   const isDone = i < pipelineStageIdx || state === 'DONE'
                   const stageProgress = isActive ? progress : 0
                   return (
