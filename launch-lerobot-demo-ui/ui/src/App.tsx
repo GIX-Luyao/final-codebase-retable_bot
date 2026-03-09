@@ -412,7 +412,6 @@ function App() {
                   const isDone = stage.exec_status === 'done'
                   const llmDone = stage.llm_status === 'done'
                   const llmTodo = stage.llm_status === 'todo'
-                  const stageProgress = isActive ? progress : 0
                   const icon = OBJECT_ICONS[stage.name] || '📦'
 
                   return (
@@ -466,27 +465,11 @@ function App() {
                           )}
                         </div>
 
-                        {/* Progress bar for active stage */}
-                        {isActive && (
-                          <div className="mt-2 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all duration-700 ease-out relative progress-glow"
-                              style={{
-                                width: `${Math.max(stageProgress, 3)}%`,
-                                background: 'linear-gradient(90deg, #00f0ffcc, #00f0ff)',
-                                boxShadow: '0 0 8px rgba(0,240,255,0.3)',
-                              }}
-                            >
-                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer" />
-                            </div>
-                          </div>
-                        )}
                       </div>
 
-                      {/* Right side: progress % or check */}
+                      {/* Right side: check marks */}
                       <div className="flex-shrink-0 w-10 text-right">
                         {isDone && <span className="text-[#d2ff00] text-lg">✓</span>}
-                        {isActive && <span className="text-xs font-mono text-[#00f0ff]/80">{stageProgress}%</span>}
                         {isSkipped && llmDone && <span className="text-emerald-400 text-sm">✓</span>}
                       </div>
                     </div>
