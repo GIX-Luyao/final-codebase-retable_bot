@@ -191,9 +191,12 @@ def read_control_command(control_file):
         return ""
     try:
         with open(control_file, "r") as f:
-            cmd = f.read().strip().upper()
+            raw = f.read().strip()
         os.remove(control_file)
-        return cmd
+        # PLAN: command preserves case for stage names; all others are uppercased
+        if raw.upper().startswith("PLAN:"):
+            return "PLAN:" + raw[5:]
+        return raw.upper()
     except Exception:
         return ""
 
