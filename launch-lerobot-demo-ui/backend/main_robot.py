@@ -177,11 +177,12 @@ class RobotState:
         self.pipeline_total = len([s for s in self.pipeline_stages_info if s["exec_status"] != "skipped"])
 
     def mark_stage_active(self, stage_name: str):
-        """Mark a stage as active (currently executing)."""
+        """Mark a stage as active. Any previously active stage becomes done."""
         for s in self.pipeline_stages_info:
+            if s["exec_status"] == "active":
+                s["exec_status"] = "done"
             if s["name"] == stage_name:
                 s["exec_status"] = "active"
-                break
 
     def mark_stage_done(self, stage_name: str):
         """Mark a stage as done (completed execution)."""
