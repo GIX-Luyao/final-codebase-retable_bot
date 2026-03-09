@@ -231,6 +231,12 @@ def check_control_file(control_file, events, hand_detector=None):
     elif cmd == "QUIT":
         events["stop_recording"] = True
         events["exit_early"] = True
+    elif cmd.startswith("PLAN:"):
+        # LLM planner sends list of stage names to execute
+        stage_names = [s.strip() for s in cmd[5:].split(",") if s.strip()]
+        events["_plan_stages"] = stage_names
+        logger.info(f"LLM plan received: run stages {stage_names}")
+        print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
     elif cmd == "START":
         events["emergency_stop"] = False
         events["auto_stopped"] = False
@@ -408,7 +414,13 @@ def wait_for_command(control_file, events, target_cmd="START",
         if cmd == "RETRY":
             # Retry handled by main loop, treat as HOME for wait_for_command
             return target_cmd
-        if cmd == "HAND_ON" and hand_detector:
+        if cmd.startswith("PLAN:"):
+            # LLM planner sends stage list — store in events for main loop
+            stage_names = [s.strip() for s in cmd[5:].split(",") if s.strip()]
+            events["_plan_stages"] = stage_names
+            logger.info(f"LLM plan received during wait: run stages {stage_names}")
+            print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
+        elif cmd == "HAND_ON" and hand_detector:
             hand_detector.enabled = True
             print("HAND_DETECT_ON", flush=True)
         elif cmd == "HAND_OFF" and hand_detector:
@@ -1002,9 +1014,18 @@ def main():
             restart_requested = False
             retry_requested = False
 
+            # ── LLM Plan: filter stages if PLAN command was received ──
+            plan_stages = events.pop("_plan_stages", None)
+            if plan_stages:
+                active_stages = [s for s in pipeline_stages if s["name"] in plan_stages]
+                logger.info(f"LLM plan active: running {len(active_stages)}/{len(pipeline_stages)} stages: "
+                            f"{[s['name'] for s in active_stages]}")
+            else:
+                active_stages = pipeline_stages
+
             stage_idx = 0
-            while stage_idx < len(pipeline_stages):
-                stage = pipeline_stages[stage_idx]
+            while stage_idx < len(active_stages):
+                stage = active_stages[stage_idx]
                 stage_name = stage["name"]
                 stage_model_id = stage["model"]
 
@@ -1102,14 +1123,26 @@ def main():
 
             # ── Restart pipeline from stage 1 ──
             if restart_requested:
-                logger.info("Reloading first model for pipeline restart...")
-                print(f"STAGE_LOADING:{pipeline_stages[0]['name']}", flush=True)
-                model = ACTPolicy.from_pretrained(pipeline_stages[0]["model"])
+                # Check if a new PLAN command arrived (from LLM planner)
+                check_control_file(args.control_file, events, hand_detector)
+
+                # Determine which stages to reload for
+                restart_plan = events.pop("_plan_stages", None)
+                if restart_plan:
+                    restart_stages = [s for s in pipeline_stages if s["name"] in restart_plan]
+                    logger.info(f"Restart with LLM plan: {[s['name'] for s in restart_stages]}")
+                else:
+                    restart_stages = pipeline_stages
+
+                first_stage = restart_stages[0] if restart_stages else pipeline_stages[0]
+                logger.info(f"Reloading first model for pipeline restart: {first_stage['name']}")
+                print(f"STAGE_LOADING:{first_stage['name']}", flush=True)
+                model = ACTPolicy.from_pretrained(first_stage["model"])
                 model.eval()
                 preprocess, postprocess = make_pre_post_processors(
-                    model.config, pretrained_path=pipeline_stages[0]["model"]
+                    model.config, pretrained_path=first_stage["model"]
                 )
-                print(f"STAGE_LOADED:{pipeline_stages[0]['name']}", flush=True)
+                print(f"STAGE_LOADED:{first_stage['name']}", flush=True)
                 events["stop_recording"] = False
                 events["exit_early"] = False
                 events["emergency_stop"] = False
@@ -1117,6 +1150,9 @@ def main():
                 events["auto_stopped"] = False
                 events["_restart"] = False
                 events["_retry"] = False
+                # Preserve plan stages for the next iteration
+                if restart_plan:
+                    events["_plan_stages"] = restart_plan
                 # Go directly back to stage loop (skip wait_for_start)
                 _skip_wait = True
                 continue

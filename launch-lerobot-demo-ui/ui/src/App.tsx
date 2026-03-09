@@ -6,6 +6,11 @@ import { useState, useEffect, useCallback, useRef, type FC } from 'react'
 
 type RobotState = 'WARMUP' | 'READY' | 'WORKING' | 'PAUSED' | 'HOMED' | 'DONE' | 'ERROR'
 
+interface LLMObjectStatus {
+  status: 'done' | 'todo'
+  reason?: string
+}
+
 interface StatusMessage {
   state: RobotState
   step?: string
@@ -18,6 +23,9 @@ interface StatusMessage {
   pipeline_stage_idx?: number
   pipeline_total?: number
   pipeline_status?: string
+  llm_plan?: Record<string, LLMObjectStatus> | null
+  llm_planning?: boolean
+  llm_plan_error?: string
 }
 
 interface Toast {
@@ -203,12 +211,96 @@ const MobileCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetect
 }
 
 /* ================================================================
+   LLM Vision Planner Panel
+   ================================================================ */
+
+const OBJECT_ICONS: Record<string, string> = {
+  Lemon: '🍋',
+  Tissue: '🧻',
+  Cup: '🥤',
+  Cloth: '🧹',
+}
+
+const LLMPlanPanel: FC<{
+  plan: Record<string, LLMObjectStatus> | null
+  planning: boolean
+  error: string
+}> = ({ plan, planning, error }) => {
+  if (!plan && !planning && !error) return null
+
+  return (
+    <div className="mb-4 flex-shrink-0 rounded-lg border border-violet-500/20 bg-violet-500/[0.03] p-4 transition-all duration-300">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-base">🧠</span>
+        <span className="text-sm font-heading tracking-[0.3em] text-violet-400/80">VISION PLANNER</span>
+        {planning && (
+          <div className="ml-auto flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-smooth-spin" />
+            <span className="text-xs font-heading tracking-[0.2em] text-violet-400/60">ANALYZING…</span>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="px-3 py-2 rounded bg-red-500/10 border border-red-500/20 mb-2">
+          <span className="text-xs font-mono text-red-400">{error}</span>
+        </div>
+      )}
+
+      {plan && (
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(plan).map(([name, obj]) => {
+            const isDone = obj.status === 'done'
+            return (
+              <div key={name}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border transition-all duration-300 ${
+                  isDone
+                    ? 'border-emerald-500/20 bg-emerald-500/[0.05]'
+                    : 'border-amber-500/20 bg-amber-500/[0.05]'
+                }`}>
+                <span className="text-lg flex-shrink-0">{OBJECT_ICONS[name] || '📦'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-sm font-heading tracking-[0.1em] ${
+                      isDone ? 'text-emerald-400' : 'text-amber-400'
+                    }`}>{name}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-heading tracking-wider ${
+                      isDone
+                        ? 'bg-emerald-500/20 text-emerald-300'
+                        : 'bg-amber-500/20 text-amber-300'
+                    }`}>
+                      {isDone ? '✓ DONE' : '⏳ TODO'}
+                    </span>
+                  </div>
+                  {obj.reason && (
+                    <p className="text-[10px] text-slate-600 mt-0.5 truncate">{obj.reason}</p>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {planning && !plan && (
+        <div className="flex items-center justify-center py-4">
+          <div className="flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-violet-400 border-t-transparent rounded-full animate-smooth-spin" />
+            <span className="text-sm font-heading tracking-[0.15em] text-slate-500">Analyzing scene…</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ================================================================
    App
    ================================================================ */
 
 function App() {
   const [state, setState]       = useState<RobotState>('WARMUP')
-  const [step, setStep]         = useState('')
+  const [, setStep]             = useState('')
   const [progress, setProgress] = useState(0)
   const [message, setMessage]   = useState('Starting up...')
   const [connected, setConnected]       = useState(false)
@@ -224,6 +316,9 @@ function App() {
   const [pipelineStageIdx, setPipelineStageIdx] = useState(0)
   const [pipelineTotal, setPipelineTotal]     = useState(0)
   const [pipelineStatus, setPipelineStatus]   = useState('')
+  const [llmPlan, setLlmPlan]           = useState<Record<string, LLMObjectStatus> | null>(null)
+  const [llmPlanning, setLlmPlanning]   = useState(false)
+  const [llmPlanError, setLlmPlanError] = useState('')
   const [mounted, setMounted] = useState(false)
 
   const wsRef     = useRef<WebSocket | null>(null)
@@ -247,10 +342,11 @@ function App() {
     } catch { toast(`${label}: network error`, 'error') }
   }, [toast])
 
-  const doStart   = useCallback(() => api('/api/start',   'Inference started'),  [api])
+  const doStart   = useCallback(() => api('/api/start',   'Planning & starting...'),  [api])
   const doStop    = useCallback(() => api('/api/stop',   'Emergency stop'),     [api])
   const doHome    = useCallback(() => api('/api/reset',  'Going to home'),      [api])
   const doResume  = useCallback(() => api('/api/resume', 'Resumed'),            [api])
+  const doRestart = useCallback(() => api('/api/restart','Replanning & restarting...'), [api])
   const doQuit    = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety OFF' : 'Hand safety ON'), [api, handDetect])
 
@@ -289,6 +385,9 @@ function App() {
           if (d.pipeline_stage_idx !== undefined) setPipelineStageIdx(d.pipeline_stage_idx)
           if (d.pipeline_total !== undefined)     setPipelineTotal(d.pipeline_total)
           if (d.pipeline_status !== undefined)    setPipelineStatus(d.pipeline_status)
+          if (d.llm_plan !== undefined)       setLlmPlan(d.llm_plan)
+          if (d.llm_planning !== undefined)   setLlmPlanning(d.llm_planning)
+          if (d.llm_plan_error !== undefined) setLlmPlanError(d.llm_plan_error)
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
@@ -369,6 +468,9 @@ function App() {
               <p className="text-base text-slate-500 mt-3 font-mono leading-relaxed">{message}</p>
             )}
           </div>
+
+          {/* ─── LLM VISION PLANNER ─── */}
+          <LLMPlanPanel plan={llmPlan} planning={llmPlanning} error={llmPlanError} />
 
           {/* ─── PIPELINE (with per-stage progress) ─── */}
           {pipelineTotal > 0 && (
@@ -542,6 +644,16 @@ function App() {
                   style={{ '--tile-color': '#d2ff00' } as React.CSSProperties}>
                   <IconHome size={28} className="text-[#d2ff00]/60 group-hover:text-[#d2ff00] transition-colors" />
                   <span className="text-sm font-heading tracking-[0.2em] text-[#d2ff00]/50 group-hover:text-[#d2ff00]/90 transition-colors">HOME</span>
+                </button>
+                {/* Restart (with LLM replan) */}
+                <button onClick={doRestart}
+                  className="action-tile group flex-1"
+                  style={{ '--tile-color': '#a78bfa' } as React.CSSProperties}>
+                  <svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    className="text-violet-400/60 group-hover:text-violet-400 transition-colors">
+                    <polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  <span className="text-sm font-heading tracking-[0.2em] text-violet-400/50 group-hover:text-violet-400/90 transition-colors">RESTART</span>
                 </button>
               </div>
             )}

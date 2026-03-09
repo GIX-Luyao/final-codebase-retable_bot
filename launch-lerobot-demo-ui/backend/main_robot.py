@@ -28,7 +28,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import (build_inference_command, ROBOT_CONFIG, CONTROL_FILE, LEROBOT_DIR, FRAME_DIR,
-                     HAND_DETECT_ENABLED, POINTS_CSV, PIPELINE_STAGES)
+                     HAND_DETECT_ENABLED, POINTS_CSV, PIPELINE_STAGES,
+                     LLM_PLANNER_ENABLED)
+from llm_planner import plan_from_camera, plan_to_dict, LLMPlannerError
 
 app = FastAPI(title="LeRobot SO101 Control Backend")
 
@@ -131,6 +133,11 @@ class RobotState:
         self.pipeline_stage_idx = 0    # 0-based index
         self.pipeline_total = len(PIPELINE_STAGES)
         self.pipeline_status = ""      # "inference" | "waypoints" | "loading" | ""
+        # LLM Planner state
+        self.llm_plan = None           # dict: {"Lemon": {"status":"done","reason":"..."}, ...}
+        self.llm_planning = False      # True while LLM API call is in progress
+        self.llm_plan_error = ""       # Error message if LLM call failed
+        self.llm_stages_to_run = []    # ["Tissue", "Cup"] — filtered stage names
         
     def to_dict(self):
         return {
@@ -145,6 +152,9 @@ class RobotState:
             "pipeline_stage_idx": self.pipeline_stage_idx,
             "pipeline_total": self.pipeline_total,
             "pipeline_status": self.pipeline_status,
+            "llm_plan": self.llm_plan,
+            "llm_planning": self.llm_planning,
+            "llm_plan_error": self.llm_plan_error,
         }
     
     def log_event(self, event: str, details: dict = None):
@@ -542,6 +552,51 @@ async def kill_process():
     finally:
         robot.process = None
 
+# ==================== LLM Planner Helper ====================
+
+async def run_llm_planning() -> dict:
+    """Run LLM vision planning and update robot state.
+
+    Returns the plan dict on success.
+    Raises LLMPlannerError on failure (robot state is updated with error).
+    """
+    robot.llm_planning = True
+    robot.llm_plan_error = ""
+    robot.llm_plan = None
+    robot.llm_stages_to_run = []
+    robot.message = "🧠 Vision planner analyzing scene..."
+    robot.log_event("LLM_PLAN_START")
+    await broadcast_state()
+
+    try:
+        result = await plan_from_camera()
+        robot.llm_plan = plan_to_dict(result)
+        robot.llm_stages_to_run = result.stages_to_run
+        robot.llm_planning = False
+
+        if not result.stages_to_run:
+            robot.llm_plan_error = ""
+            robot.message = "All objects already done — nothing to do!"
+            robot.log_event("LLM_PLAN_DONE", {
+                "plan": robot.llm_plan, "stages": [], "result": "all_done"
+            })
+        else:
+            robot.message = f"Plan: {', '.join(result.stages_to_run)}"
+            robot.log_event("LLM_PLAN_DONE", {
+                "plan": robot.llm_plan, "stages": result.stages_to_run
+            })
+        await broadcast_state()
+        return robot.llm_plan
+
+    except LLMPlannerError as e:
+        robot.llm_planning = False
+        robot.llm_plan_error = str(e)
+        robot.message = f"LLM planner error: {str(e)[:80]}"
+        robot.log_event("LLM_PLAN_ERROR", {"error": str(e)})
+        await broadcast_state()
+        raise
+
+
 # ==================== API Endpoints ====================
 
 class FeedbackRequest(BaseModel):
@@ -555,7 +610,7 @@ class MoveToPointRequest(BaseModel):
 
 @app.post("/api/start")
 async def api_start():
-    """Send START command — inference begins immediately (model already loaded)."""
+    """Send START command — with LLM planning if enabled."""
     if robot.process is None:
         return {"status": "error", "message": "Process not running. Warming up..."}
     if robot.state == "WARMUP":
@@ -563,12 +618,34 @@ async def api_start():
     if robot.state == "WORKING":
         return {"status": "error", "message": "Already running"}
 
+    # ── LLM Planning ──
+    if LLM_PLANNER_ENABLED:
+        try:
+            await run_llm_planning()
+        except LLMPlannerError:
+            return {"status": "error", "message": f"LLM planner failed: {robot.llm_plan_error}"}
+
+        if not robot.llm_stages_to_run:
+            robot.state = "DONE"
+            robot.step = "All Done"
+            robot.progress = 100
+            robot.message = "All objects already done — nothing to do!"
+            await broadcast_state()
+            return {"status": "ok", "message": "All objects already done"}
+
+        # Send PLAN command first, then START
+        plan_cmd = "PLAN:" + ",".join(robot.llm_stages_to_run)
+        send_control_command(plan_cmd)
+        await asyncio.sleep(0.15)  # Give eval_pipeline time to read PLAN
+
     send_control_command("START")
     robot.state = "WORKING"
     robot.step = "Starting"
     robot.progress = 0
     robot.message = "Inference starting..."
-    robot.log_event("CMD_START")
+    robot.pipeline_stage_idx = 0
+    robot.pipeline_total = len(robot.llm_stages_to_run) if robot.llm_stages_to_run else len(PIPELINE_STAGES)
+    robot.log_event("CMD_START", {"planned_stages": robot.llm_stages_to_run})
     await broadcast_state()
     return {"status": "ok", "message": "Start sent — inference beginning immediately"}
 
@@ -617,19 +694,52 @@ async def api_resume():
 
 @app.post("/api/restart")
 async def api_restart():
-    """Restart pipeline from stage 1: go home → reload first model → start."""
+    """Restart pipeline: go home → LLM plan → run only needed stages."""
     if robot.process is None:
         return {"status": "error", "message": "Not running"}
+
+    # Step 1: Go home first
+    send_control_command("HOME")
+    robot.state = "HOMED"
+    robot.step = "Homing"
+    robot.message = "Going home before replanning..."
+    robot.log_event("CMD_RESTART_HOME")
+    await broadcast_state()
+
+    # Wait a moment for the robot to start homing
+    await asyncio.sleep(1.0)
+
+    # Step 2: LLM Planning
+    if LLM_PLANNER_ENABLED:
+        try:
+            await run_llm_planning()
+        except LLMPlannerError:
+            return {"status": "error", "message": f"LLM planner failed: {robot.llm_plan_error}"}
+
+        if not robot.llm_stages_to_run:
+            robot.state = "DONE"
+            robot.step = "All Done"
+            robot.progress = 100
+            robot.message = "All objects already done — nothing to do!"
+            await broadcast_state()
+            return {"status": "ok", "message": "All objects already done"}
+
+        # Send PLAN command, then RESTART
+        plan_cmd = "PLAN:" + ",".join(robot.llm_stages_to_run)
+        send_control_command(plan_cmd)
+        await asyncio.sleep(0.15)
+
     send_control_command("RESTART")
     robot.state = "WORKING"
     robot.step = "Restarting"
     robot.progress = 0
-    robot.message = "Restarting pipeline from stage 1..."
+    robot.message = f"Restarting with plan: {', '.join(robot.llm_stages_to_run) if robot.llm_stages_to_run else 'all stages'}..."
     robot.pipeline_stage_idx = 0
+    robot.pipeline_total = len(robot.llm_stages_to_run) if robot.llm_stages_to_run else len(PIPELINE_STAGES)
     robot.pipeline_status = "loading"
-    robot.log_event("CMD_RESTART")
+    robot.log_event("CMD_RESTART", {"planned_stages": robot.llm_stages_to_run})
     await broadcast_state()
-    return {"status": "ok", "message": "Restart sent — going home and restarting from stage 1"}
+    return {"status": "ok", "message": "Restart sent with LLM plan"}
 
 
 @app.post("/api/retry")
@@ -714,6 +824,36 @@ async def api_pipeline():
         "current_idx": robot.pipeline_stage_idx,
         "status": robot.pipeline_status,
     }
+
+
+# ==================== LLM Planner Endpoints ====================
+
+@app.get("/api/plan")
+async def api_plan():
+    """Return the latest LLM planning result."""
+    return {
+        "plan": robot.llm_plan,
+        "planning": robot.llm_planning,
+        "error": robot.llm_plan_error,
+        "stages_to_run": robot.llm_stages_to_run,
+        "enabled": LLM_PLANNER_ENABLED,
+    }
+
+
+@app.post("/api/replan")
+async def api_replan():
+    """Manually trigger LLM replanning (does NOT start inference)."""
+    if not LLM_PLANNER_ENABLED:
+        return {"status": "error", "message": "LLM planner is disabled"}
+    try:
+        await run_llm_planning()
+        return {
+            "status": "ok",
+            "plan": robot.llm_plan,
+            "stages_to_run": robot.llm_stages_to_run,
+        }
+    except LLMPlannerError:
+        return {"status": "error", "message": robot.llm_plan_error}
 
 
 # ==================== Camera Frame Streaming ====================
@@ -844,15 +984,18 @@ async def startup():
     print(f"  Cameras    : {ROBOT_CONFIG['cameras']}")
     print(f"  Control    : {CONTROL_FILE}")
     print(f"  Hand       : {'ON' if HAND_DETECT_ENABLED else 'OFF'}")
+    print(f"  LLM Plan : {'ON — ' + str(LLM_PLANNER_ENABLED) if LLM_PLANNER_ENABLED else 'OFF'}")
     print("-" * 55)
-    print("  POST /api/start          → Start inference (instant)")
+    print("  POST /api/start          → LLM plan + start inference")
     print("  POST /api/stop           → Emergency stop")
     print("  POST /api/reset          → Go to home")
     print("  POST /api/resume         → Resume inference")
-    print("  POST /api/restart        → Restart from stage 1")
+    print("  POST /api/restart        → Home + LLM plan + restart")
     print("  POST /api/retry          → Retry current stage")
     print("  POST /api/quit           → Quit & re-warm")
     print("  POST /api/hand-detect    → Toggle hand safety")
+    print("  GET  /api/plan           → Get LLM plan result")
+    print("  POST /api/replan         → Trigger LLM replan")
     print("  GET  /api/frame-grid/:c  → 16-grid camera frame")
     print("  GET  /api/points         → List preposition points")
     print(f"  POST /api/move-to-point  → Move arm (1-{len(POINTS)} points)")
