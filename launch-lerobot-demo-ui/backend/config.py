@@ -123,7 +123,7 @@ PIPELINE_STAGES = [
 LLM_PLANNER_ENABLED = True
 LLM_API_BASE = "https://openrouter.ai/api/v1"
 LLM_API_KEY = "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"
-LLM_MODEL = "google/gemini-3.1-flash-lite-preview"
+LLM_MODEL = "google/gemini-3-flash-preview"
 LLM_PLANNABLE_OBJECTS = ["Lemon", "Tissue", "Cup", "Cloth"]
 
 # ── Legacy single-model config (for backward compatibility) ──

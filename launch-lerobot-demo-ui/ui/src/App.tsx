@@ -50,11 +50,6 @@ const STATE_META: Record<RobotState, {
   ERROR:   { label: 'ERROR',       color: '#ef4444', glow: 'glow-red',   textGlow: 'text-glow-red' },
 }
 
-const FEEDBACK_TAGS = [
-  'missed target', 'dropped object', 'wrong position',
-  'collision', 'too slow', 'gripper issue',
-]
-
 /* ================================================================
    SVG Icons — inline for zero deps
    ================================================================ */
@@ -306,9 +301,6 @@ function App() {
   const [connected, setConnected]       = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
   const [toasts, setToasts]     = useState<Toast[]>([])
-  const [showFeedback, setShowFeedback] = useState(false)
-  const [fbScore, setFbScore]   = useState<'up' | 'down' | null>(null)
-  const [fbTags, setFbTags]     = useState<string[]>([])
   const [handDetect, setHandDetect]       = useState(true)
   const [handDetected, setHandDetected]   = useState(false)
   const [autoStopped, setAutoStopped]     = useState(false)
@@ -350,17 +342,6 @@ function App() {
   const doQuit    = useCallback(() => api('/api/quit',   'Quit & re-warming'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety OFF' : 'Hand safety ON'), [api, handDetect])
 
-  const submitFeedback = useCallback(async () => {
-    if (!fbScore) return
-    try {
-      const body: { score: string; tags?: string[] } = { score: fbScore }
-      if (fbScore === 'down' && fbTags.length) body.tags = fbTags
-      const r = await fetch('/api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      if (r.ok) toast('Feedback submitted', 'success')
-    } catch { /* noop */ }
-    setShowFeedback(false); setFbScore(null); setFbTags([])
-  }, [fbScore, fbTags, toast])
-
   useEffect(() => {
     let backoff = 1000
     const connect = () => {
@@ -371,10 +352,7 @@ function App() {
       ws.onmessage = (ev) => {
         try {
           const d: StatusMessage = JSON.parse(ev.data)
-          if (d.state) setState(prev => {
-            if (d.state === 'DONE' && prev !== 'DONE') setTimeout(() => setShowFeedback(true), 500)
-            return d.state
-          })
+          if (d.state) setState(d.state)
           if (d.step !== undefined)     setStep(d.step)
           if (d.progress !== undefined) setProgress(Math.max(0, Math.min(100, d.progress)))
           if (d.message !== undefined)  setMessage(d.message)
@@ -696,63 +674,6 @@ function App() {
         ))}
       </div>
 
-      {/* ═══ FEEDBACK MODAL ═══ */}
-      {showFeedback && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 z-50">
-          <div className="bg-[#0a0a0a] rounded-xl p-8 w-full max-w-md border border-white/[0.06] animate-scaleIn"
-            style={{ boxShadow: '0 0 80px rgba(210,255,0,0.05)' }}>
-            <h2 className="font-heading text-4xl text-center tracking-[0.15em] mb-6 gradient-text">
-              HOW DID IT GO?
-            </h2>
-            <div className="flex justify-center gap-5 mb-6">
-              <button onClick={() => setFbScore('up')}
-                className={`w-24 h-24 rounded-xl text-5xl flex items-center justify-center transition-all duration-200 border ${
-                  fbScore === 'up'
-                    ? 'bg-emerald-500/20 border-emerald-500/50 scale-105 shadow-[0_0_30px_rgba(16,185,129,0.2)]'
-                    : 'bg-white/[0.02] border-white/[0.06] hover:border-emerald-500/30 hover:bg-emerald-500/[0.05]'
-                }`}>👍</button>
-              <button onClick={() => setFbScore('down')}
-                className={`w-24 h-24 rounded-xl text-5xl flex items-center justify-center transition-all duration-200 border ${
-                  fbScore === 'down'
-                    ? 'bg-red-500/20 border-red-500/50 scale-105 shadow-[0_0_30px_rgba(239,68,68,0.2)]'
-                    : 'bg-white/[0.02] border-white/[0.06] hover:border-red-500/30 hover:bg-red-500/[0.05]'
-                }`}>👎</button>
-            </div>
-            {fbScore === 'down' && (
-              <div className="mb-4 animate-fadeInUp">
-                <p className="text-xs font-heading text-slate-600 text-center tracking-[0.3em] mb-3">WHAT WENT WRONG?</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {FEEDBACK_TAGS.map(tag => (
-                    <button key={tag}
-                      onClick={() => setFbTags(p => p.includes(tag) ? p.filter(t => t !== tag) : [...p, tag])}
-                      className={`px-3 py-1.5 rounded text-xs font-mono transition-all border ${
-                        fbTags.includes(tag)
-                          ? 'bg-red-500/15 border-red-500/30 text-red-300'
-                          : 'bg-white/[0.02] border-white/[0.06] text-slate-500 hover:border-white/[0.12]'
-                      }`}>{tag}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button onClick={() => { setShowFeedback(false); setFbScore(null); setFbTags([]) }}
-                className="flex-1 py-3 rounded-lg text-sm font-heading tracking-[0.15em]
-                           text-slate-500 border border-white/[0.06] hover:border-white/[0.12] hover:text-slate-300
-                           transition-all btn-press">
-                SKIP
-              </button>
-              <button onClick={submitFeedback} disabled={!fbScore}
-                className={`flex-1 py-3 rounded-lg text-sm font-heading tracking-[0.15em] transition-all btn-press ${
-                  fbScore
-                    ? 'bg-[#d2ff00] text-black font-bold hover:bg-[#e5ff4d] shadow-[0_0_20px_rgba(210,255,0,0.15)]'
-                    : 'bg-white/[0.02] border border-white/[0.06] text-slate-700 cursor-not-allowed'
-                }`}>
-                SUBMIT
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

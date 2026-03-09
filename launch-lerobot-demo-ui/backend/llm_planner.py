@@ -32,10 +32,12 @@ logger = logging.getLogger(__name__)
 PLANNING_PROMPT = """\
 You are a visual planner for a table-clearing robot. Look at this photo of a table and determine the tidying status of each object listed below.
 
+Context: The robot arm is visible in the image. The **original/starting positions** of the lemon, tissue box, and cup are on the **left side of the robot arm**. When these objects have been tidied, they will have been moved away from the left side (e.g. into a box on the right, or off the table entirely).
+
 Objects to evaluate:
-1. **Lemon** — A lemon that should be placed into a designated box. If the lemon is still sitting on the table surface, status is "todo". If it is no longer visible on the table or is already inside a box, status is "done".
-2. **Tissue** — A tissue box that should be moved to a designated position. If the tissue box is still at its original position on the table, status is "todo". If it has been moved away, status is "done".
-3. **Cup** — A water cup that should be placed into a designated box. If the cup is still on the table surface, status is "todo". If it is no longer visible on the table or is already inside a box, status is "done".
+1. **Lemon** — A lemon that should be placed into a designated box. If the lemon is still on the left side of the robot arm (its original position), status is "todo". If it is no longer visible on the left side or has been moved into a box, status is "done".
+2. **Tissue** — A tissue box that should be moved to a designated position. If the tissue box is still on the left side of the robot arm (its original position), status is "todo". If it has been moved away from the left side, status is "done".
+3. **Cup** — A water cup that should be placed into a designated box. If the cup is still on the left side of the robot arm (its original position), status is "todo". If it is no longer visible on the left side or has been moved into a box, status is "done".
 4. **Cloth** — A cleaning cloth / rag. Look specifically at the **bottom-right area** of the image. If you can see a cloth/rag in the bottom-right corner, status is "todo" (the table needs wiping). If there is NO cloth in the bottom-right corner, status is "done" (no wiping needed).
 
 Respond with ONLY the following JSON, no other text:
