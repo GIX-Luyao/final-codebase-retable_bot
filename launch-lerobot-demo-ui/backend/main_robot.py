@@ -472,11 +472,17 @@ async def spawn_warmup_process():
                 robot.reset_to_ready()
                 robot.log_event("WARMUP_COMPLETE")
                 await broadcast_state()
+                # Auto-trigger LLM planning (plan only, no start) to show pipeline tiles
+                if LLM_PLANNER_ENABLED:
+                    asyncio.create_task(_auto_plan_only())
                 continue
             if sig == "READY_FOR_START":
                 robot.reset_to_ready()
                 robot.log_event("READY_FOR_START")
                 await broadcast_state()
+                # Auto-trigger LLM planning (plan only, no start) to show pipeline tiles
+                if LLM_PLANNER_ENABLED:
+                    asyncio.create_task(_auto_plan_only())
                 continue
             if sig == "INFERENCE_DONE":
                 robot.state = "DONE"
@@ -653,6 +659,27 @@ async def run_llm_planning() -> dict:
         robot.log_event("LLM_PLAN_ERROR", {"error": str(e)})
         await broadcast_state()
         raise
+
+
+async def _auto_plan_only():
+    """Auto-triggered after warmup: run LLM plan only (no start) to populate pipeline tiles."""
+    try:
+        await run_llm_planning()
+    except LLMPlannerError:
+        print(f"[AUTO_PLAN] LLM planning failed: {robot.llm_plan_error}")
+        # Stay in READY — user can still click Start or Replan
+        robot.message = "Ready to start (LLM plan failed — click Replan to retry)"
+        await broadcast_state()
+        return
+
+    # Stay in READY state — don't start execution
+    robot.state = "READY"
+    robot.step = ""
+    if robot.llm_stages_to_run:
+        robot.message = f"Ready — Plan: {', '.join(robot.llm_stages_to_run)}"
+    else:
+        robot.message = "All objects already done — nothing to do!"
+    await broadcast_state()
 
 
 async def _auto_plan_and_start():
