@@ -978,8 +978,14 @@ def main():
     if goto_points:
         logger.info(f"Loaded {len(goto_points)} GOTO points from {args.points_csv}")
 
-    # ── Keyboard listener ──
-    listener, events = init_keyboard_listener()
+    # ── Keyboard listener — disabled for UI-only control ──
+    listener = None
+    events = {
+        "exit_early": False,
+        "emergency_stop": False,
+        "stop_recording": False,
+        "go_to_rest": False,
+    }
     events["auto_stopped"] = False
 
     # ── Hand detector ──
