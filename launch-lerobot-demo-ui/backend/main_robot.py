@@ -982,18 +982,47 @@ async def api_plan():
 
 @app.post("/api/replan")
 async def api_replan():
-    """Manually trigger LLM replanning (does NOT start inference)."""
+    """Manually trigger LLM replanning: go home first, then plan (does NOT start inference)."""
     if not LLM_PLANNER_ENABLED:
         return {"status": "error", "message": "LLM planner is disabled"}
+    if robot.process is None:
+        return {"status": "error", "message": "Process not running"}
+
+    # Step 1: Send arm home first
+    send_control_command("HOME")
+    robot.state = "HOMED"
+    robot.step = "Homing"
+    robot.message = "Going home before replanning..."
+    robot.log_event("CMD_REPLAN_HOME")
+    await broadcast_state()
+
+    # Run the rest in background so API returns immediately
+    asyncio.create_task(_replan_after_home())
+    return {"status": "ok", "message": "Going home, then replanning..."}
+
+
+async def _replan_after_home():
+    """Background task for replan: wait for arm to home → LLM plan (no start)."""
+    # Give robot time to reach home
+    await asyncio.sleep(3.0)
+
     try:
         await run_llm_planning()
-        return {
-            "status": "ok",
-            "plan": robot.llm_plan,
-            "stages_to_run": robot.llm_stages_to_run,
-        }
     except LLMPlannerError:
-        return {"status": "error", "message": robot.llm_plan_error}
+        print(f"[REPLAN] LLM planning failed: {robot.llm_plan_error}")
+        robot.state = "READY"
+        robot.message = "Replan failed — click Replan to retry"
+        await broadcast_state()
+        return
+
+    # Stay in READY state — don't start execution
+    robot.state = "READY"
+    robot.step = ""
+    if robot.llm_stages_to_run:
+        robot.message = f"Ready — Plan: {', '.join(robot.llm_stages_to_run)}"
+    else:
+        robot.message = "All objects already done — nothing to do!"
+    await broadcast_state()
 
 
 # ==================== Camera Frame Streaming ====================
