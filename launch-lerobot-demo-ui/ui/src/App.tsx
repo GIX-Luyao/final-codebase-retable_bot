@@ -346,18 +346,6 @@ function App() {
   const doRestart = useCallback(() => api('/api/replan','Replanning...'), [api])
   const doQuit    = useCallback(() => api('/api/quit',   'Quit and re-warmup'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety disabled' : 'Hand safety enabled'), [api, handDetect])
-  const doRunStage = useCallback(async (stageName: string) => {
-    try {
-      const r = await fetch('/api/run-stage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: stageName }),
-      })
-      const data = await r.json()
-      if (r.ok && data.status === 'ok') toast(`Running ${stageName}`, 'success')
-      else toast(data.message || `Failed to run ${stageName}`, 'error')
-    } catch { toast(`Run ${stageName}: network error`, 'error') }
-  }, [toast])
 
   useEffect(() => {
     let backoff = 1000
@@ -500,7 +488,6 @@ function App() {
                   const llmDone = stage.llm_status === 'done'
                   const isDone = execDone || llmDone
                   const icon = OBJECT_ICONS[stage.name] || '📦'
-                  const canRunSingle = !isWarmup && !isActive && !isStopped
 
                   return (
                     <div key={stage.name}
@@ -540,33 +527,9 @@ function App() {
                           )}
                         </div>
                       </div>
-                      <div className="flex-shrink-0">
-                        {canRunSingle && (
-                          <button onClick={() => doRunStage(stage.name)}
-                            title={`Run ${stage.name} alone`}
-                            className="px-2.5 py-1.5 rounded-lg transition-all duration-200 group"
-                            style={{
-                              background: '#faf8f6',
-                              border: '1px solid #e0dbd4',
-                            }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.background = '#fef3e2'
-                              e.currentTarget.style.borderColor = '#f5ddb5'
-                            }}
-                            onMouseLeave={e => {
-                              e.currentTarget.style.background = '#faf8f6'
-                              e.currentTarget.style.borderColor = '#e0dbd4'
-                            }}>
-                            <span className="flex items-center gap-1.5">
-                              <IconPlay size={11} className="text-[#9e978f] group-hover:text-[#e8793a] transition-colors" />
-                              <span className="text-[10px] font-heading text-[#9e978f] group-hover:text-[#e8793a] transition-colors">Run</span>
-                            </span>
-                          </button>
-                        )}
-                        {isDone && !canRunSingle && (
-                          <span style={{ color: '#4caf7d' }} className="text-lg">✓</span>
-                        )}
-                      </div>
+                      {isDone && (
+                        <span style={{ color: '#4caf7d' }} className="text-lg flex-shrink-0">✓</span>
+                      )}
                     </div>
                   )
                 })}
