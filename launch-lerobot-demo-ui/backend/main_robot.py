@@ -672,6 +672,11 @@ async def _auto_plan_and_start():
         await run_llm_planning()
     except LLMPlannerError:
         print(f"[AUTO] LLM planning failed: {robot.llm_plan_error}")
+        # Fall back to READY so user can still use QUICK RUN
+        robot.state = "READY"
+        robot.step = ""
+        robot.message = f"LLM failed — use QUICK RUN to test stages manually"
+        await broadcast_state()
         return
 
     if not robot.llm_stages_to_run:
@@ -682,11 +687,8 @@ async def _auto_plan_and_start():
         await broadcast_state()
         return
 
-    # Send PLAN + START
-    plan_cmd = "PLAN:" + ",".join(robot.llm_stages_to_run)
-    send_control_command(plan_cmd)
-    await asyncio.sleep(0.15)
-    send_control_command("START")
+    # Single atomic command — avoids race condition
+    send_control_command("PLAN_START:" + ",".join(robot.llm_stages_to_run))
 
     robot.state = "WORKING"
     robot.step = "Starting"
@@ -706,6 +708,10 @@ class FeedbackRequest(BaseModel):
 
 class MoveToPointRequest(BaseModel):
     point: int
+
+
+class RunStageRequest(BaseModel):
+    stage: str  # stage name, e.g. "Lemon", "Cup"
 
 
 @app.post("/api/start")
@@ -805,12 +811,10 @@ async def _restart_plan_and_go():
             await broadcast_state()
             return
 
-        # Send PLAN + RESTART
-        plan_cmd = "PLAN:" + ",".join(robot.llm_stages_to_run)
-        send_control_command(plan_cmd)
-        await asyncio.sleep(0.15)
-
-    send_control_command("RESTART")
+        # Single atomic command — avoids race condition
+        send_control_command("PLAN_RESTART:" + ",".join(robot.llm_stages_to_run))
+    else:
+        send_control_command("RESTART")
     robot.state = "WORKING"
     robot.step = "Restarting"
     robot.progress = 0
@@ -835,6 +839,47 @@ async def api_retry():
     robot.log_event("CMD_RETRY", {"stage": robot.pipeline_stage})
     await broadcast_state()
     return {"status": "ok", "message": f"Retry sent — going home and retrying {robot.pipeline_stage}"}
+
+
+@app.post("/api/run-stage")
+async def api_run_stage(req: RunStageRequest):
+    """Test mode: directly run a single stage — no LLM, no homing.
+
+    Sends PLAN:<stage> + RESTART immediately so the robot loads and
+    executes only the requested stage.
+    """
+    if robot.process is None:
+        return {"status": "error", "message": "Process not running. Warming up..."}
+    if robot.state == "WARMUP":
+        return {"status": "error", "message": "Still warming up. Please wait."}
+
+    # Validate stage name
+    valid_names = [s["name"] for s in PIPELINE_STAGES]
+    if req.stage not in valid_names:
+        return {"status": "error", "message": f"Unknown stage '{req.stage}'. Valid: {valid_names}"}
+
+    # Update pipeline display: only show the selected stage
+    robot.llm_plan = None
+    robot.llm_plan_error = ""
+    robot.llm_planning = False
+    robot.llm_stages_to_run = [req.stage]
+    robot.pipeline_stages_info = [{
+        "name": req.stage, "llm_status": "todo", "exec_status": "pending",
+    }]
+    robot.pipeline_total = 1
+
+    # Single atomic command — avoids race condition where PLAN gets overwritten
+    send_control_command(f"PLAN_RESTART:{req.stage}")
+
+    robot.state = "WORKING"
+    robot.step = f"Loading {req.stage}"
+    robot.progress = 0
+    robot.message = f"[TEST] Running [{req.stage}] directly..."
+    robot.pipeline_stage_idx = 0
+    robot.pipeline_status = "loading"
+    robot.log_event("RUN_STAGE_DIRECT", {"stage": req.stage})
+    await broadcast_state()
+    return {"status": "ok", "message": f"[TEST] Running {req.stage} directly"}
 
 
 @app.post("/api/quit")
@@ -1071,6 +1116,7 @@ async def startup():
     print("  POST /api/resume         → Resume inference")
     print("  POST /api/restart        → Home + LLM plan + restart")
     print("  POST /api/retry          → Retry current stage")
+    print("  POST /api/run-stage      → Run a single stage by name")
     print("  POST /api/quit           → Quit & re-warm")
     print("  POST /api/hand-detect    → Toggle hand safety")
     print("  GET  /api/plan           → Get LLM plan result")

@@ -193,10 +193,15 @@ def read_control_command(control_file):
         with open(control_file, "r") as f:
             raw = f.read().strip()
         os.remove(control_file)
-        # PLAN: command preserves case for stage names; all others are uppercased
-        if raw.upper().startswith("PLAN:"):
+        # Commands with stage names preserve case; all others are uppercased
+        upper = raw.upper()
+        if upper.startswith("PLAN_RESTART:"):
+            return "PLAN_RESTART:" + raw[13:]
+        if upper.startswith("PLAN_START:"):
+            return "PLAN_START:" + raw[11:]
+        if upper.startswith("PLAN:"):
             return "PLAN:" + raw[5:]
-        return raw.upper()
+        return upper
     except Exception:
         return ""
 
@@ -227,6 +232,23 @@ def check_control_file(control_file, events, hand_detector=None):
         events["emergency_stop"] = True
         events["exit_early"] = True
         events["_restart"] = True
+    elif cmd.startswith("PLAN_RESTART:"):
+        # Combined PLAN + RESTART in a single command (avoids race condition)
+        stage_names = [s.strip() for s in cmd[13:].split(",") if s.strip()]
+        events["_plan_stages"] = stage_names
+        events["emergency_stop"] = True
+        events["exit_early"] = True
+        events["_restart"] = True
+        logger.info(f"PLAN_RESTART received: run stages {stage_names}")
+        print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
+    elif cmd.startswith("PLAN_START:"):
+        # Combined PLAN + START in a single command (avoids race condition)
+        stage_names = [s.strip() for s in cmd[11:].split(",") if s.strip()]
+        events["_plan_stages"] = stage_names
+        events["emergency_stop"] = False
+        events["auto_stopped"] = False
+        logger.info(f"PLAN_START received: run stages {stage_names}")
+        print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
     elif cmd == "RETRY":
         events["emergency_stop"] = True
         events["exit_early"] = True
@@ -417,7 +439,22 @@ def wait_for_command(control_file, events, target_cmd="START",
         if cmd == "RETRY":
             # Retry handled by main loop, treat as HOME for wait_for_command
             return target_cmd
-        if cmd.startswith("PLAN:"):
+        if cmd.startswith("PLAN_START:"):
+            # Combined PLAN + START — store plan and return immediately
+            stage_names = [s.strip() for s in cmd[11:].split(",") if s.strip()]
+            events["_plan_stages"] = stage_names
+            logger.info(f"PLAN_START received during wait: run stages {stage_names}")
+            print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
+            return target_cmd
+        elif cmd.startswith("PLAN_RESTART:"):
+            # Combined PLAN + RESTART — store plan and return
+            stage_names = [s.strip() for s in cmd[13:].split(",") if s.strip()]
+            events["_plan_stages"] = stage_names
+            events["_restart"] = True
+            logger.info(f"PLAN_RESTART received during wait: run stages {stage_names}")
+            print(f"PLAN_RECEIVED:{','.join(stage_names)}", flush=True)
+            return target_cmd
+        elif cmd.startswith("PLAN:"):
             # LLM planner sends stage list — store in events for main loop
             stage_names = [s.strip() for s in cmd[5:].split(",") if s.strip()]
             events["_plan_stages"] = stage_names

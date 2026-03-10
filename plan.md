@@ -116,7 +116,7 @@ async def plan_from_camera(frame_path: str) -> PlanResult:
 **OpenRouter API 配置：**
 - Endpoint: `https://openrouter.ai/api/v1/chat/completions`
 - Model: `google/gemini-3.1-flash-lite-preview`
-- API Key: `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`
+- API Key: (stored in `.env` file, not committed to git)
 
 **Prompt 设计：**
 ```
@@ -142,7 +142,7 @@ async def plan_from_camera(frame_path: str) -> PlanResult:
 # ── LLM Planner ──
 LLM_PLANNER_ENABLED = True
 LLM_API_BASE = "https://openrouter.ai/api/v1"
-LLM_API_KEY = "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"
+LLM_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 LLM_MODEL = "google/gemini-3.1-flash-lite-preview"
 LLM_PLANNABLE_OBJECTS = ["Lemon", "Tissue", "Cup", "Cloth"]
 ```

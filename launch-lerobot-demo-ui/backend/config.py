@@ -8,6 +8,16 @@ Easily extensible — just add entries to PIPELINE_STAGES.
 
 import os
 
+# ── Load .env file if present ──
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
 # Control file path — shared between backend and eval_pipeline.py
 CONTROL_FILE = "/tmp/lerobot_cmd"
 
@@ -120,9 +130,10 @@ PIPELINE_STAGES = [
 #  LLM VISION PLANNER — OpenRouter / Gemini
 # ════════════════════════════════════════════════════════════════════════
 
-LLM_PLANNER_ENABLED = True
+_LLM_API_KEY_RAW = os.environ.get("OPENROUTER_API_KEY", "")
+LLM_PLANNER_ENABLED = bool(_LLM_API_KEY_RAW)   # auto-disable if no key
 LLM_API_BASE = "https://openrouter.ai/api/v1"
-LLM_API_KEY = "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"
+LLM_API_KEY = _LLM_API_KEY_RAW
 LLM_MODEL = "google/gemini-3-flash-preview"
 LLM_PLANNABLE_OBJECTS = ["Lemon", "Tissue", "Cup", "Cloth"]
 

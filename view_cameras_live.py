@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 
 print("打开摄像头...")
 cap_front = cv2.VideoCapture('/dev/video0')
-cap_wrist = cv2.VideoCapture('/dev/video2')
-cap_side = cv2.VideoCapture('/dev/video8')
+cap_wrist = cv2.VideoCapture('/dev/video4')
+cap_side = cv2.VideoCapture('/dev/video9')
 
 cap_front.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap_front.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
