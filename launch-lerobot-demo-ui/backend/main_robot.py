@@ -549,16 +549,11 @@ async def spawn_warmup_process():
             # Update pipeline sub-state
             if "_pipeline_stage" in updates:
                 robot.pipeline_stage = updates.pop("_pipeline_stage")
-                # Derive stage index from name (among active stages only)
-                active_idx = 0
-                for i, s in enumerate(PIPELINE_STAGES):
+                # Derive stage index from name using pipeline_stages_info (filtered list)
+                for idx, s in enumerate(robot.pipeline_stages_info):
                     if s["name"] == robot.pipeline_stage:
-                        robot.pipeline_stage_idx = active_idx
+                        robot.pipeline_stage_idx = idx
                         break
-                    # Only count non-skipped stages for index
-                    if robot.pipeline_stages_info and i < len(robot.pipeline_stages_info):
-                        if robot.pipeline_stages_info[i]["exec_status"] != "skipped":
-                            active_idx += 1
             if "_pipeline_status" in updates:
                 new_status = updates.pop("_pipeline_status")
                 robot.pipeline_status = new_status
