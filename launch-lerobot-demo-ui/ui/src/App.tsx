@@ -99,16 +99,9 @@ const IconLayers: FC<{ size?: number; className?: string }> = ({ size = 16, clas
     <polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
   </svg>
 )
-const IconUpload: FC<{ size?: number; className?: string }> = ({ size = 14, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
-  </svg>
-)
-const IconTrash: FC<{ size?: number; className?: string }> = ({ size = 14, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-  </svg>
-)
+
+/** Fixed reference image path (placed in public/) */
+const REFERENCE_IMAGE_URL = '/reference.png'
 
 /* ================================================================
    Camera Feed
@@ -194,104 +187,52 @@ const CameraFeed: FC<{
 }
 
 /* ================================================================
-   Debug Overlay Panel
+   Debug Overlay Controls — uses fixed reference.png
    ================================================================ */
-const DebugOverlayPanel: FC<{
-  overlays: Record<string, string | null>
-  overlayOpacity: number
-  onUpload: (camName: string, url: string) => void
-  onRemove: (camName: string) => void
+const DebugOverlayControls: FC<{
+  enabled: boolean
+  opacity: number
+  onToggle: () => void
   onOpacityChange: (val: number) => void
-  cameras: string[]
-}> = ({ overlays, overlayOpacity, onUpload, onRemove, onOpacityChange, cameras }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [targetCam, setTargetCam] = useState<string>('')
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !targetCam) return
-    const url = URL.createObjectURL(file)
-    onUpload(targetCam, url)
-    if (fileInputRef.current) fileInputRef.current.value = ''
-  }
-
-  const triggerUpload = (camName: string) => {
-    setTargetCam(camName)
-    setTimeout(() => fileInputRef.current?.click(), 0)
-  }
-
-  return (
-    <div className="flex flex-col gap-2.5 px-3 py-3 rounded-xl"
-      style={{ background: '#faf8f6', border: '1px solid #e0dbd4' }}>
+}> = ({ enabled, opacity, onToggle, onOpacityChange }) => (
+  <div className="flex flex-col gap-2 px-3 py-2.5 rounded-xl"
+    style={{ background: '#faf8f6', border: '1px solid #e0dbd4' }}>
+    <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
         <IconLayers size={14} className="text-[#8b7ec8]" />
-        <span className="text-xs font-heading tracking-wide" style={{ color: '#8b7ec8' }}>Debug Overlay</span>
+        <span className="text-xs font-heading tracking-wide" style={{ color: '#8b7ec8' }}>Reference Overlay</span>
       </div>
-
-      {/* Per-camera upload/remove buttons */}
-      <div className="flex flex-col gap-1.5">
-        {cameras.map(cam => (
-          <div key={cam} className="flex items-center gap-2">
-            <span className="text-[11px] font-heading flex-1 truncate" style={{ color: '#6b6560' }}>{cam}</span>
-            {overlays[cam] ? (
-              <button onClick={() => onRemove(cam)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-heading transition-colors"
-                style={{ background: '#fdeaea', border: '1px solid #f0b8b8', color: '#d94f4f' }}>
-                <IconTrash size={10} />
-                <span>Remove</span>
-              </button>
-            ) : (
-              <button onClick={() => triggerUpload(cam)}
-                className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-heading transition-colors"
-                style={{ background: '#f0edf8', border: '1px solid #d4cde8', color: '#8b7ec8' }}>
-                <IconUpload size={10} />
-                <span>Upload</span>
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Opacity slider */}
-      {Object.values(overlays).some(v => v) && (
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-[10px] font-heading" style={{ color: '#9e978f' }}>Opacity</span>
-          <input type="range" min="0" max="100" value={Math.round(overlayOpacity * 100)}
-            onChange={e => onOpacityChange(Number(e.target.value) / 100)}
-            className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
-            style={{ accentColor: '#8b7ec8' }} />
-          <span className="text-[10px] font-heading w-8 text-right" style={{ color: '#8b7ec8' }}>
-            {Math.round(overlayOpacity * 100)}%
-          </span>
-        </div>
-      )}
-
-      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+      <button onClick={onToggle}
+        className="relative w-9 h-5 rounded-full transition-all duration-300 flex-shrink-0"
+        style={{ background: enabled ? '#8b7ec8' : '#c8c1b8', cursor: 'pointer' }}>
+        <div className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300"
+          style={{ transform: enabled ? 'translateX(18px)' : 'translateX(2px)' }} />
+      </button>
     </div>
-  )
-}
+    {enabled && (
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-heading" style={{ color: '#9e978f' }}>Opacity</span>
+        <input type="range" min="0" max="100" value={Math.round(opacity * 100)}
+          onChange={e => onOpacityChange(Number(e.target.value) / 100)}
+          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+          style={{ accentColor: '#8b7ec8' }} />
+        <span className="text-[10px] font-heading w-8 text-right" style={{ color: '#8b7ec8' }}>
+          {Math.round(opacity * 100)}%
+        </span>
+      </div>
+    )}
+  </div>
+)
 
 /* ================================================================
    Sidebar / Mobile Camera Feeds
    ================================================================ */
 const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
   const [cameras, setCameras] = useState<string[]>([])
-  const [overlays, setOverlays] = useState<Record<string, string | null>>({})
+  const [overlayEnabled, setOverlayEnabled] = useState(false)
   const [overlayOpacity, setOverlayOpacity] = useState(0.2)
-  const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => { fetch('/api/cameras').then(r => r.json()).then(d => setCameras(d.cameras || [])).catch(() => {}) }, [])
-
-  const handleUpload = useCallback((cam: string, url: string) => {
-    setOverlays(prev => ({ ...prev, [cam]: url }))
-  }, [])
-  const handleRemove = useCallback((cam: string) => {
-    setOverlays(prev => {
-      const old = prev[cam]
-      if (old) URL.revokeObjectURL(old)
-      return { ...prev, [cam]: null }
-    })
-  }, [])
 
   if (cameras.length === 0) return null
   return (
@@ -300,31 +241,17 @@ const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetec
         <div className="h-px flex-1" style={{ background: '#e0dbd4' }} />
         <span className="text-xs font-heading tracking-widest" style={{ color: '#9e978f' }}>Cameras</span>
         <div className="h-px flex-1" style={{ background: '#e0dbd4' }} />
-        <button onClick={() => setShowDebug(p => !p)}
-          className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-heading transition-colors"
-          style={{
-            background: showDebug ? '#f0edf8' : '#faf8f6',
-            border: `1px solid ${showDebug ? '#d4cde8' : '#e0dbd4'}`,
-            color: showDebug ? '#8b7ec8' : '#9e978f',
-          }}>
-          <IconLayers size={10} />
-          <span>Debug</span>
-        </button>
       </div>
-      {showDebug && (
-        <DebugOverlayPanel
-          overlays={overlays}
-          overlayOpacity={overlayOpacity}
-          onUpload={handleUpload}
-          onRemove={handleRemove}
-          onOpacityChange={setOverlayOpacity}
-          cameras={cameras}
-        />
-      )}
+      <DebugOverlayControls
+        enabled={overlayEnabled}
+        opacity={overlayOpacity}
+        onToggle={() => setOverlayEnabled(p => !p)}
+        onOpacityChange={setOverlayOpacity}
+      />
       {cameras.map(name => (
         <CameraFeed key={name} name={name} active={active} handDetected={handDetected}
           isHandCamera={handDetectEnabled && name === 'front'}
-          overlayUrl={overlays[name] || null}
+          overlayUrl={overlayEnabled ? REFERENCE_IMAGE_URL : null}
           overlayOpacity={overlayOpacity} />
       ))}
     </div>
@@ -333,55 +260,27 @@ const SidebarCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetec
 
 const MobileCameraFeeds: FC<{ active: boolean; handDetected: boolean; handDetectEnabled: boolean }> = ({ active, handDetected, handDetectEnabled }) => {
   const [cameras, setCameras] = useState<string[]>([])
-  const [overlays, setOverlays] = useState<Record<string, string | null>>({})
+  const [overlayEnabled, setOverlayEnabled] = useState(false)
   const [overlayOpacity, setOverlayOpacity] = useState(0.2)
-  const [showDebug, setShowDebug] = useState(false)
 
   useEffect(() => { fetch('/api/cameras').then(r => r.json()).then(d => setCameras(d.cameras || [])).catch(() => {}) }, [])
-
-  const handleUpload = useCallback((cam: string, url: string) => {
-    setOverlays(prev => ({ ...prev, [cam]: url }))
-  }, [])
-  const handleRemove = useCallback((cam: string) => {
-    setOverlays(prev => {
-      const old = prev[cam]
-      if (old) URL.revokeObjectURL(old)
-      return { ...prev, [cam]: null }
-    })
-  }, [])
 
   if (cameras.length === 0) return null
   return (
     <div className="w-full mb-3">
-      <div className="flex items-center gap-2 mb-2">
-        <button onClick={() => setShowDebug(p => !p)}
-          className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-heading transition-colors"
-          style={{
-            background: showDebug ? '#f0edf8' : '#faf8f6',
-            border: `1px solid ${showDebug ? '#d4cde8' : '#e0dbd4'}`,
-            color: showDebug ? '#8b7ec8' : '#9e978f',
-          }}>
-          <IconLayers size={10} />
-          <span>Debug Overlay</span>
-        </button>
+      <div className="mb-2">
+        <DebugOverlayControls
+          enabled={overlayEnabled}
+          opacity={overlayOpacity}
+          onToggle={() => setOverlayEnabled(p => !p)}
+          onOpacityChange={setOverlayOpacity}
+        />
       </div>
-      {showDebug && (
-        <div className="mb-2">
-          <DebugOverlayPanel
-            overlays={overlays}
-            overlayOpacity={overlayOpacity}
-            onUpload={handleUpload}
-            onRemove={handleRemove}
-            onOpacityChange={setOverlayOpacity}
-            cameras={cameras}
-          />
-        </div>
-      )}
       <div className={`grid gap-3 ${cameras.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
         {cameras.map(name => (
           <CameraFeed key={name} name={name} active={active} handDetected={handDetected}
             isHandCamera={handDetectEnabled && name === 'front'}
-            overlayUrl={overlays[name] || null}
+            overlayUrl={overlayEnabled ? REFERENCE_IMAGE_URL : null}
             overlayOpacity={overlayOpacity} />
         ))}
       </div>
