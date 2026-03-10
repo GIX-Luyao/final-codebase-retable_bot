@@ -348,7 +348,7 @@ function App() {
   const doStop    = useCallback(() => api('/api/stop',   'Emergency Stop'),     [api])
   const doHome    = useCallback(() => api('/api/reset',  'Return to Home'),      [api])
   const doResume  = useCallback(() => api('/api/resume', 'Resumed'),            [api])
-  const doRestart = useCallback(() => api('/api/restart','Replanning and starting...'), [api])
+  const doRestart = useCallback(() => api('/api/replan','Replanning...'), [api])
   const doQuit    = useCallback(() => api('/api/quit',   'Quit and re-warmup'),  [api])
   const doToggleHand = useCallback(() => api('/api/hand-detect', handDetect ? 'Hand safety disabled' : 'Hand safety enabled'), [api, handDetect])
   const doRunStage = useCallback(async (stageName: string) => {
