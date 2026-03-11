@@ -1,158 +1,442 @@
-<p align="center">
-  <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
-</p>
+# ReTable Bot — Autonomous Table-Clearing Robot
 
-<div align="center">
+> A multi-model robotic pipeline that autonomously clears a table by sequentially picking up objects (ex: lemon, tissue box, cup, cloth) using trained ACT policies, with a web-based control UI and safety features.
 
-[![Tests](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml/badge.svg?branch=main)](https://github.com/huggingface/lerobot/actions/workflows/nightly.yml?query=branch%3Amain)
-[![Python versions](https://img.shields.io/pypi/pyversions/lerobot)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/huggingface/lerobot/blob/main/LICENSE)
-[![Status](https://img.shields.io/pypi/status/lerobot)](https://pypi.org/project/lerobot/)
-[![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
-[![Discord](https://img.shields.io/badge/Discord-Join_Us-5865F2?style=flat&logo=discord&logoColor=white)](https://discord.gg/q8Dzzpym3f)
+Built on top of [HuggingFace LeRobot](https://github.com/huggingface/lerobot)
 
-</div>
+---
 
-**LeRobot** aims to provide models, datasets, and tools for real-world robotics in PyTorch. The goal is to lower the barrier to entry so that everyone can contribute to and benefit from shared datasets and pretrained models.
+## Table of Contents
 
-🤗 A hardware-agnostic, Python-native interface that standardizes control across diverse platforms, from low-cost arms (SO-100) to humanoids.
+- [Overview](#overview)
+- [Hardware Setup](#hardware-setup)
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+- [How to Run](#how-to-run)
+  - [Option A: Web UI (Recommended)](#option-a-web-ui-recommended)
+  - [Option B: Command-Line Pipeline](#option-b-command-line-pipeline)
+  - [Option C: Single-Model Scripts](#option-c-single-model-scripts)
+- [What to Expect](#what-to-expect)
+- [Custom Components](#custom-components)
+- [Trained Models](#trained-models)
+- [Troubleshooting](#troubleshooting)
+- [Acknowledgments](#acknowledgments)
 
-🤗 A standardized, scalable LeRobotDataset format (Parquet + MP4 or images) hosted on the Hugging Face Hub, enabling efficient storage, streaming and visualization of massive robotic datasets.
+---
 
-🤗 State-of-the-art policies that have been shown to transfer to the real-world ready for training and deployment.
+## Overview
 
-🤗 Comprehensive support for the open-source ecosystem to democratize physical AI.
+**ReTable Bot** is an end-to-end autonomous table-clearing system. A SO-101 robot arm uses four separately-trained [ACT (Action Chunking with Transformers)](https://huggingface.co/docs/lerobot/act) policies — one per object class — orchestrated in a pipeline that:
 
-## Quick Start
+1. **Plans** the clearing order (optionally via an LLM vision planner using Gemini)
+2. **Picks** each object using the corresponding ACT model
+3. **Moves** through predefined waypoints to place the object in a bin
+4. **Transitions** to the next stage automatically via joint-angle trigger conditions
 
-LeRobot can be installed directly from PyPI.
+Safety features include **MediaPipe hand detection** (auto emergency-stop when a human hand enters the workspace) and keyboard/UI controls for E-stop, resume, and go-to-home.
+
+A **React + FastAPI web UI** provides a dashboard to start, stop, and monitor the robot in real time with live camera feeds and state broadcasting via WebSocket.
+
+### System Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Web UI (React/TS)                    │
+│                    control dashboard                    │
+│         Camera feeds · State display · Controls         │
+└──────────────────────┬──────────────────────────────────┘
+                       │ REST + WebSocket (port 8000)
+┌──────────────────────▼──────────────────────────────────┐
+│                 FastAPI Backend (Python)                │
+│   main_robot.py — subprocess mgmt, IPC, state machine   │
+│   config.py    — pipeline stages, hardware config       │
+│   llm_planner  — Gemini vision-based task planning      │
+└──────────────────────┬──────────────────────────────────┘
+                       │ subprocess + /tmp/lerobot_cmd IPC
+┌──────────────────────▼──────────────────────────────────┐
+│              eval_pipeline.py (Core Engine)             │
+│   Loads ACT models sequentially · Runs inference loop   │
+│   Monitors trigger conditions · Executes waypoints      │
+│   Hand safety detection · Camera frame streaming        │
+└──────────────────────┬──────────────────────────────────┘
+                       │ LeRobot API
+┌──────────────────────▼──────────────────────────────────┐
+│          HuggingFace LeRobot Library                    │
+│   Robot control · Policy inference · Dataset tools      │
+│   Modified: e-stop, go-to-home in control_utils/robot   │
+└──────────────────────┬──────────────────────────────────┘
+                       │ Serial (Feetech bus)
+┌──────────────────────▼──────────────────────────────────┐
+│              SO-101 Robot Arm Hardware                  │
+│         6-DOF · Feetech STS3215 servos · Gripper        │
+│         USB cameras (front + wrist)                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Hardware Setup
+
+| Component | Details |
+|-----------|---------|
+| Robot Arm | SO-101 (6-DOF, Feetech STS3215 servos) |
+| Cameras | 2× USB cameras (front view + wrist-mounted) |
+| Compute | Ubuntu PC with NVIDIA GPU (CUDA) |
+| Connection | Robot via `/dev/ttyACM0`, cameras via `/dev/video4`, `/dev/video8` |
+
+---
+
+## Project Structure
+
+```
+lerobot/                          # Root (forked from huggingface/lerobot)
+│
+├── README.md                     # ← You are here
+│
+├── ── Core Pipeline Scripts ──
+├── eval_pipeline.py              # Multi-model pipeline engine (main inference loop)
+├── eval_act_safe.py              # Single-model inference with full safety controls
+├── run_act_simple.py             # Minimal single ACT model inference
+├── run_smolvla_simple.py         # Minimal SmolVLA model inference
+│
+├── ── Web UI + Backend ──
+├── launch-lerobot-demo-ui/
+│   ├── start.sh                  # One-click launcher (bash start.sh)
+│   ├── backend/
+│   │   ├── main_robot.py         # FastAPI backend — subprocess mgmt, WebSocket
+│   │   ├── config.py             # Pipeline stages, hardware config, model paths
+│   │   ├── preflight_server.py   # Camera/hardware preflight checker
+│   │   ├── llm_planner.py        # LLM vision planner (Gemini via OpenRouter)
+│   │   └── _camera_worker.py     # Camera frame streaming worker
+│   └── ui/
+│       └── src/
+│           ├── App.tsx            # Main React control dashboard
+│           ├── PreflightCheck.tsx # Camera setup wizard
+│           └── RobotArm3D.tsx     # 3D robot visualization
+│
+├── ── Robot Utility Scripts ──
+├── disable_torque.py             # Disable all servo torques (safe manual posing)
+├── read_joints.py                # Print current joint positions (normalized)
+├── show_joints.py                # Live joint position display
+├── save_position.py              # Save current arm pose to JSON waypoint file
+├── get_ee_position.py            # Print end-effector position
+├── move_to_points.py             # Move arm through a CSV of waypoints
+├── view_cameras.py               # Capture snapshots from all cameras
+├── view_cameras_live.py          # Live camera feed display
+├── takeover.py                   # Record demonstrations via teleoperation
+│
+├── ── Shell Scripts ──
+├── record_dataset.sh             # Record training data
+├── eval_act_andy_tube.sh         # Evaluate ACT on specific task
+├── eval_pi05_andy_tube.sh        # Evaluate Pi0.5 on specific task
+│
+├── ── Waypoint / Config Files ──
+├── lemon.json                    # Waypoints for lemon pick-and-place
+├── tissue.json                   # Waypoints for tissue box
+├── cup.json                      # Waypoints for cup
+├── cloth.csv                     # Waypoints for cloth (CSV format)
+├── saved_positions.json          # Named arm positions
+├── point.csv                     # 16-grid prepositions (ROS2 radians)
+│
+├── ── LeRobot Library (modified fork) ──
+├── src/lerobot/                  # Core library with custom safety patches
+│   ├── common/robot_devices/     # Modified: e-stop, go-to-home support
+│   └── scripts/                  # Modified control utilities
+│
+├── ── Documentation ──
+├── CUSTOM_CHANGES.md             # Detailed log of all modifications to base lerobot
+├── runbook.md                    # Operational runbook
+├── plan.md / progress.md         # Project planning documents
+│
+├── ── Original LeRobot ──
+├── src/lerobot/                  # Full LeRobot library
+├── tests/                        # LeRobot test suite
+├── examples/                     # LeRobot examples
+├── docs/                         # LeRobot documentation
+└── pyproject.toml                # Python package config
+```
+
+---
+
+## Installation
+
+### Prerequisites
+
+| Requirement | Details |
+|---|---|
+| **OS** | Ubuntu Linux |
+| **GPU** | CUDA-capable NVIDIA GPU |
+| **Conda env** | Python 3.10+ |
+| **Node.js** | 18+ with npm (for the web UI frontend) |
+| **Robot** | SO-101 arm connected via USB serial (`/dev/ttyACM*`) |
+| **Cameras** | 2× USB cameras (front workspace + wrist-mounted) |
+
+### Steps
 
 ```bash
-pip install lerobot
-lerobot-info
+# 1. Clone the repository
+git clone https://github.com/<your-org>/retable-bot.git
+cd retable-bot
+
+# 2. Create and activate the conda environment
+#    (following the official LeRobot installation guide)
+conda create -y -n lerobot python=3.10
+conda activate lerobot
+conda install ffmpeg -c conda-forge
+
+# 3. Install system build dependencies (Linux)
+sudo apt-get install cmake build-essential python3-dev pkg-config \
+  libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
+  libswscale-dev libswresample-dev libavfilter-dev
+
+# 4. Install LeRobot with Feetech motor support (editable mode)
+pip install -e ".[feetech]"
+
+# 5. Install backend dependencies for the web UI
+pip install fastapi uvicorn[standard] pydantic websockets opencv-python pyserial
+
+# 6. Install the web UI frontend dependencies
+cd launch-lerobot-demo-ui/ui
+npm install
+cd ../..
+
+# 7. Verify hardware connections
+lerobot-find-cameras opencv      # List detected cameras
+lerobot-find-port                # Find robot serial port
+python view_cameras.py           # Visual camera check
+python read_joints.py            # Check robot arm
 ```
 
-> [!IMPORTANT]
-> For detailed installation guide, please see the [Installation Documentation](https://huggingface.co/docs/lerobot/installation).
+> **Note:** The conda environment name `lerobot` matches the official [LeRobot installation guide](https://huggingface.co/docs/lerobot/installation) and is also referenced in `launch-lerobot-demo-ui/start.sh`. If you use a different env name, update `CONDA_ENV` in `start.sh` accordingly.
 
-## Robots & Control
+---
 
-<div align="center">
-  <img src="./media/readme/robots_control_video.webp" width="640px" alt="Reachy 2 Demo">
-</div>
+## How to Run
 
-LeRobot provides a unified `Robot` class interface that decouples control logic from hardware specifics. It supports a wide range of robots and teleoperation devices.
+### Option A: Web UI (Recommended)
 
-```python
-from lerobot.robots.myrobot import MyRobot
+The web UI provides a full control dashboard with live camera feeds, start/stop controls, and real-time status.
 
-# Connect to a robot
-robot = MyRobot(config=...)
-robot.connect()
+#### Step 1 — Preflight: Configure Cameras & Robot Port
 
-# Read observation and send action
-obs = robot.get_observation()
-action = model.select_action(obs)
-robot.send_action(action)
-```
-
-**Supported Hardware:** SO100, LeKiwi, Koch, HopeJR, OMX, EarthRover, Reachy2, Gamepads, Keyboards, Phones, OpenARM, Unitree G1.
-
-While these devices are natively integrated into the LeRobot codebase, the library is designed to be extensible. You can easily implement the Robot interface to utilize LeRobot's data collection, training, and visualization tools for your own custom robot.
-
-For detailed hardware setup guides, see the [Hardware Documentation](https://huggingface.co/docs/lerobot/integrate_hardware).
-
-## LeRobot Dataset
-
-To solve the data fragmentation problem in robotics, we utilize the **LeRobotDataset** format.
-
-- **Structure:** Synchronized MP4 videos (or images) for vision and Parquet files for state/action data.
-- **HF Hub Integration:** Explore thousands of robotics datasets on the [Hugging Face Hub](https://huggingface.co/lerobot).
-- **Tools:** Seamlessly delete episodes, split by indices/fractions, add/remove features, and merge multiple datasets.
-
-```python
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-# Load a dataset from the Hub
-dataset = LeRobotDataset("lerobot/aloha_mobile_cabinet")
-
-# Access data (automatically handles video decoding)
-episode_index=0
-print(f"{dataset[episode_index]['action'].shape=}\n")
-```
-
-Learn more about it in the [LeRobotDataset Documentation](https://huggingface.co/docs/lerobot/lerobot-dataset-v3)
-
-## SoTA Models
-
-LeRobot implements state-of-the-art policies in pure PyTorch, covering Imitation Learning, Reinforcement Learning, and Vision-Language-Action (VLA) models, with more coming soon. It also provides you with the tools to instrument and inspect your training process.
-
-<p align="center">
-  <img alt="Gr00t Architecture" src="./media/readme/VLA_architecture.jpg" width="640px">
-</p>
-
-Training a policy is as simple as running a script configuration:
+USB cameras get assigned different `/dev/video*` paths on each boot or re-plug. Run preflight first to verify and save the mapping:
 
 ```bash
-lerobot-train \
-  --policy=act \
-  --dataset.repo_id=lerobot/aloha_mobile_cabinet
+conda activate lerobot
+bash ~/lerobot/launch-lerobot-demo-ui/start.sh preflight
 ```
 
-| Category                   | Models                                                                                                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Imitation Learning**     | [ACT](./docs/source/policy_act_README.md), [Diffusion](./docs/source/policy_diffusion_README.md), [VQ-BeT](./docs/source/policy_vqbet_README.md)                                                             |
-| **Reinforcement Learning** | [HIL-SERL](./docs/source/hilserl.mdx), [TDMPC](./docs/source/policy_tdmpc_README.md) & QC-FQL (coming soon)                                                                                                  |
-| **VLAs Models**            | [Pi0Fast](./docs/source/pi0fast.mdx), [Pi0.5](./docs/source/pi05.mdx), [GR00T N1.5](./docs/source/policy_groot_README.md), [SmolVLA](./docs/source/policy_smolvla_README.md), [XVLA](./docs/source/xvla.mdx) |
+Open **http://localhost:5173** in a browser. The preflight UI will:
+1. Auto-detect all connected cameras and serial ports
+2. Show live previews from each camera so you can visually identify them
+3. Let you assign roles (click "Front" or "Wrist" on each camera card)
+4. Select the robot port (e.g., `/dev/ttyACM0`)
+5. Save the mapping to `launch-lerobot-demo-ui/backend/config.py`
 
-Similarly to the hardware, you can easily implement your own policy & leverage LeRobot's data collection, training, and visualization tools, and share your model to the HF Hub
+After saving, stop the preflight server:
+```bash
+bash ~/lerobot/launch-lerobot-demo-ui/start.sh stop
+```
 
-For detailed policy setup guides, see the [Policy Documentation](https://huggingface.co/docs/lerobot/bring_your_own_policies).
-
-## Inference & Evaluation
-
-Evaluate your policies in simulation or on real hardware using the unified evaluation script. LeRobot supports standard benchmarks like **LIBERO**, **MetaWorld** and more to come.
+#### Step 2 — Launch the Main Control UI
 
 ```bash
-# Evaluate a policy on the LIBERO benchmark
-lerobot-eval \
-  --policy.path=lerobot/pi0_libero_finetuned \
-  --env.type=libero \
-  --env.task=libero_object \
-  --eval.n_episodes=10
+bash ~/lerobot/launch-lerobot-demo-ui/start.sh
 ```
 
-Learn how to implement your own simulation environment or benchmark and distribute it from the HF Hub by following the [EnvHub Documentation](https://huggingface.co/docs/lerobot/envhub)
+This starts:
+- **Backend** (`main_robot.py`) on `http://localhost:8000` — spawns `eval_pipeline.py` with model pre-warming
+- **Frontend** on `http://localhost:5173` — the robot control dashboard
 
-## Resources
+Open **http://localhost:5173** in a browser.
 
-- **[Documentation](https://huggingface.co/docs/lerobot/index):** The complete guide to tutorials & API.
-- **[Discord](https://discord.gg/q8Dzzpym3f):** Join the `LeRobot` server to discuss with the community.
-- **[X](https://x.com/LeRobotHF):** Follow us on X to stay up-to-date with the latest developments.
-- **[Robot Learning Tutorial](https://huggingface.co/spaces/lerobot/robot-learning-tutorial):** A free, hands-on course to learn robot learning using LeRobot.
+#### Step 3 — Wait for Model Warmup
 
-## Citation
+The backend automatically loads the ACT models, connects to the robot, and initializes cameras. The UI shows a **WARMUP** state with a progress indicator. This takes ~30 seconds.
 
-If you use LeRobot in your research, please cite:
+#### Step 4 — Run Inference
 
-```bibtex
-@misc{cadene2024lerobot,
-    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
-    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
-    howpublished = "\url{https://github.com/huggingface/lerobot}",
-    year = {2024}
-}
+Once the state changes to **READY**, use the UI controls:
+
+| Button | Action |
+|---|---|
+| **▶ Start** | Begin the multi-model pipeline |
+| **⏸ E-Stop** | Emergency stop (disables torques immediately) |
+| **🏠 Home** | Smoothly return arm to home position |
+| **▶ Resume** | Continue after an E-stop |
+| **🔄 Replan** | Ask the LLM to reorder remaining stages |
+| **✕ Quit** | Stop inference |
+
+The UI also shows live camera feeds (front + wrist) and hand safety detection status.
+
+#### Stopping the System
+
+```bash
+bash ~/lerobot/launch-lerobot-demo-ui/start.sh stop
 ```
 
-## Contribute
+Or press **Ctrl+C** in the terminal where `start.sh` is running.
 
-We welcome contributions from everyone in the community! To get started, please read our [CONTRIBUTING.md](./CONTRIBUTING.md) guide. Whether you're adding a new feature, improving documentation, or fixing a bug, your help and feedback are invaluable. We're incredibly excited about the future of open-source robotics and can't wait to work with you on what's next—thank you for your support!
+### Option B: Command-Line Pipeline
 
-<p align="center">
-  <img alt="SO101 Video" src="./media/readme/so100_video.webp" width="640px">
-</p>
+Run the full 4-model pipeline directly without the UI:
 
-<div align="center">
-<sub>Built by the <a href="https://huggingface.co/lerobot">LeRobot</a> team at <a href="https://huggingface.co">Hugging Face</a> with ❤️</sub>
-</div>
+```bash
+conda activate lerobot
+
+python eval_pipeline.py \
+  --robot-port /dev/ttyACM0 \
+  --robot-id follower_hope \
+  --cameras "front:/dev/video4,wrist:/dev/video8" \
+  --fps 30 \
+  --device cuda \
+  --pipeline-config launch-lerobot-demo-ui/backend/config.py \
+  --hand-detect
+```
+
+**Keyboard controls during execution:**
+| Key | Action |
+|-----|--------|
+| `Spacebar` | Emergency stop (hold) |
+| `Enter` | Resume from E-stop |
+| `r` | Go to home position (smooth interpolation) |
+| `→` (Right arrow) | Skip current episode |
+| `Esc` | Quit |
+
+### Option C: Single-Model Scripts
+
+For testing a single ACT policy:
+
+```bash
+# Minimal single-model inference
+python run_act_simple.py
+
+# Single model with full safety features
+python eval_act_safe.py \
+  --model FrankYuzhe/act_lemon_box_0226_merged_160_ckpt_040000 \
+  --robot-port /dev/ttyACM0 \
+  --cameras "front:/dev/video4,wrist:/dev/video8"
+```
+
+### Utility Scripts
+
+```bash
+# Disable torques (safe to manually pose the arm)
+python disable_torque.py
+
+# View live camera feeds
+python view_cameras_live.py
+
+# Save current arm position as a waypoint
+python save_position.py --name "my_position" --file waypoints.json
+
+# Read current joint positions
+python read_joints.py
+```
+
+---
+
+## What to Expect
+
+### Startup
+1. The system loads the first ACT model (Lemon) and initializes the robot arm
+2. The arm moves to its home position
+3. Camera feeds start streaming
+
+### During Operation
+The pipeline runs through **four stages** in sequence:
+
+| Stage | Object | Model | Trigger to Advance |
+|-------|--------|-------|--------------------|
+| 1 | 🍋 Lemon | `act_lemon_box_0226_merged_160_ckpt_040000` | shoulder_pan < -25° |
+| 2 | 🧻 Tissue | `act_tissue_box_0226_merged_80_0226_221249` | shoulder_pan < -25° |
+| 3 | 🥤 Cup | `act_cup_box_0301_merged_80` | shoulder_pan < -25° |
+| 4 | 🧹 Cloth | `act_cloth_0301_merged_80_0301_200931` | shoulder_pan > 0° |
+
+For each stage:
+1. The ACT model runs inference, controlling the arm to pick up the object
+2. When the trigger condition is met (arm reaches a certain angle → object is grasped), the model stops
+3. The arm follows predefined waypoints to move the object to a drop-off bin
+4. The next model loads and the cycle repeats
+
+### Safety
+- **Hand detection**: If a human hand is detected in the camera frame, the arm automatically stops and waits
+- **E-stop**: Press Spacebar (or the UI button) to immediately disable all servo torques
+- **Go-to-home**: Press `r` to smoothly return the arm to its resting position
+
+### Output
+- Live camera frames are streamed to `/tmp/lerobot_frames/` as JPEG files
+- Console output shows the current stage, model loading progress, and trigger monitoring
+- The web UI displays real-time state (IDLE → RUNNING → E-STOP → DONE) with camera feeds
+
+---
+
+## Custom Components
+
+This project adds the following on top of the base [HuggingFace LeRobot](https://github.com/huggingface/lerobot) library:
+
+| Component | Description |
+|-----------|-------------|
+| `eval_pipeline.py` | Multi-model sequential pipeline engine |
+| `eval_act_safe.py` | Single-model inference with safety controls |
+| `launch-lerobot-demo-ui/` | Full-stack React + FastAPI control interface |
+| Safety patches in `src/lerobot/` | E-stop, go-to-home support in `control_utils.py`, `robot.py` |
+| Hand detection | MediaPipe-based auto-stop when human hand is detected |
+| LLM planner | Gemini-powered vision planner for dynamic stage ordering |
+| Utility scripts | `disable_torque.py`, `save_position.py`, `read_joints.py`, etc. |
+| Waypoint system | JSON/CSV waypoint files for each object's pick-and-place trajectory |
+
+For a detailed changelog of all modifications to the base LeRobot library, see [`CUSTOM_CHANGES.md`](CUSTOM_CHANGES.md).
+
+---
+
+## Trained Models
+
+All models are hosted on HuggingFace Hub under the `FrankYuzhe` namespace:
+
+| Model | Task | Training Data |
+|-------|------|---------------|
+| `FrankYuzhe/act_lemon_box_0226_merged_160_ckpt_040000` | Pick up lemon | 160 demonstrations |
+| `FrankYuzhe/act_tissue_box_0226_merged_80_0226_221249` | Pick up tissue box | 80 demonstrations |
+| `FrankYuzhe/act_cup_box_0301_merged_80` | Pick up cup | 80 demonstrations |
+| `FrankYuzhe/act_cloth_0301_merged_80_0301_200931` | Pick up cloth | 80 demonstrations |
+
+Models were trained using the ACT architecture via LeRobot's training pipeline with data collected through teleoperation on the SO-101 arm.
+
+---
+
+## Troubleshooting
+
+### Cameras not detected
+- Check USB connections: `ls /dev/video*`
+- Run: `lerobot-find-cameras opencv`
+- Some `/dev/video*` entries are metadata-only (even numbers are usually the actual streams)
+
+### Robot port not found
+- Check USB: `ls /dev/ttyACM*`
+- Run: `lerobot-find-port`
+- Unplug/replug the robot USB cable
+
+### Frontend won't load
+- Ensure npm dependencies are installed: `cd ~/lerobot/launch-lerobot-demo-ui/ui && npm install`
+- Check port 5173 isn't in use: `lsof -i :5173`
+
+### Backend crash on startup
+- Ensure conda env is active: `conda activate lerobot`
+- Check Python deps: `pip install fastapi uvicorn opencv-python`
+- Check port 8000 isn't in use: `lsof -i :8000`
+
+### Model warmup fails
+- Ensure CUDA is available: `python -c "import torch; print(torch.cuda.is_available())"`
+- Models are auto-downloaded from HuggingFace on first run — ensure internet access
+
+---
+
+## Acknowledgments
+
+- **[HuggingFace LeRobot](https://github.com/huggingface/lerobot)** — The base robotics library this project is forked from
+- **ACT (Action Chunking with Transformers)** — The imitation learning policy architecture used for all manipulation tasks
+
+---
+
+*This project is a fork of [huggingface/lerobot](https://github.com/huggingface/lerobot) with custom extensions for a multi-object table-clearing demonstration. For the original LeRobot documentation, see the [upstream repository](https://github.com/huggingface/lerobot).*
